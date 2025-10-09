@@ -7,6 +7,7 @@ import { Plus } from 'lucide-react'
 import Image from "next/image"
 import { useRouter } from "next/navigation";
 import { useState } from "react"
+import TemplateSelectionModal from './TemplateSelectingModal'
 import { toast } from "sonner";
 
 const AddNewButton = () => {
@@ -46,8 +47,11 @@ const [isModalOpen, setIsModalOpen] = useState(false);
           />
         </div>
       </div>
+      <TemplateSelectionModal isOpen={isModalOpen} onClose={()=>setIsModalOpen(false)}
+        onSubmit={()=>{}}/>
       
-    //   Todo Implement Template Selecting Model here
+      
+    
     </>
   )
 }
