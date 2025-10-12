@@ -2,16 +2,37 @@
 "use client";
 
 import { Button } from "@/components/ui/button"
-// import { createPlayground } from "@/features/playground/actions";
+
 import { Plus } from 'lucide-react'
 import Image from "next/image"
 import { useRouter } from "next/navigation";
 import { useState } from "react"
 import TemplateSelectionModal from './TemplateSelectingModal'
 import { toast } from "sonner";
+import { createPlayground } from "../actions";
 
 const AddNewButton = () => {
 const [isModalOpen, setIsModalOpen] = useState(false);
+const [selectedTemplate, setSelectedTemplate] = useState<{
+  title:string;
+  template:"REACT" | "NEXTJS" | "VUE" | "ANGULAR" | "HONO" | "ANGULAR";
+  description?:string;
+} | null>(null);
+const router = useRouter();
+
+const handleSubmit = async(data:{title:string,
+  template:"REACT" | "NEXTJS" | "VUE" | "ANGULAR" | "HONO" | "EXPRESS",
+  description?:string
+
+}) => {
+  // @ts-ignore
+  setSelectedTemplate(data);
+  const newPlayground = await createPlayground(data)
+  toast.success("Playground created successfully")
+  setIsModalOpen(false)
+  router.push(`/playground/${newPlayground?.id}`)
+
+}
 
   return (
     <>
@@ -48,7 +69,7 @@ const [isModalOpen, setIsModalOpen] = useState(false);
         </div>
       </div>
       <TemplateSelectionModal isOpen={isModalOpen} onClose={()=>setIsModalOpen(false)}
-        onSubmit={()=>{}}/>
+        onSubmit={handleSubmit}/>
       
       
     

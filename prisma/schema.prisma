@@ -58,6 +58,7 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   myplayground playground[]
+  staredPlayground StarMark[]
   
 
   @@map("users")
@@ -80,10 +81,22 @@ model playground {
   template Templates @default(NEXTJS)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  Starmark StarMark[]
 
   userId String @db.ObjectId
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   @@map("playgrounds")
 
+}
+
+model StarMark {
+  id String @id @default(cuid()) @map("_id")
+  userId String @db.ObjectId
+  playgroundId String @db.ObjectId
+  isMarked Boolean 
+  createdAt DateTime @default(now())
+  user User @relation(fields:[userId],references: [id],onDelete:Cascade)
+  playground playground @relation(fields:[playgroundId],references: [id],onDelete:Cascade)
+  @@unique([userId,playgroundId])
 }
