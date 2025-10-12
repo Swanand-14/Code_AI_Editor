@@ -1,7 +1,7 @@
 import React from 'react'
 import AddNewButton from '@/modules/dashboard/components/add-new';
 import AddRepo from '@/modules/dashboard/components/add-new-repo';
-import { getAllPlaygrounds } from '@/modules/dashboard/actions';
+import { deleteProject, duplicateProjectId, editProjectById, getAllPlaygrounds } from '@/modules/dashboard/actions';
 import ProjectTable from '@/modules/dashboard/components/project-table';
 import EmptyState from '@/modules/dashboard/components/empty-state';
 
@@ -17,9 +17,12 @@ const page = async() =>{
                 {
                     playgrounds && playgrounds.length === 0 ? (
                         <EmptyState/>) : (
+                            // @ts-ignore
                             <ProjectTable projects={playgrounds || []}
-                            onUpdateProject={()=>{}}
-                            onDuplicateProject={()=>{}}
+                            onDeleteProject={deleteProject}
+                            onUpdateProject={editProjectById}
+                             // @ts-ignore
+                            onDuplicateProject={duplicateProjectId}
                             />
                         )
                 }

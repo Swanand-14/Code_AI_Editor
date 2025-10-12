@@ -4,23 +4,23 @@ import { DashboardSidebar } from "@/modules/dashboard/components/dashboard-sideb
 export default async function DashboardLayout({children}: {children: React.ReactNode}){
     const playgrounds = await getAllPlaygrounds();
     const technologyIconMap: Record<string, string> = {
-        REACT: "ZAP",
-        NEXTJS: "lightbulb",
-        VITE: "VITE",
-        EXPRESS: "SERVER",
-        FASTIFY: "SERVER"
-      }
+  REACT: "Zap",        // Capital Z
+  NEXTJS: "Lightbulb", // Capital L
+  VITE: "Zap",         // Use existing icon
+  EXPRESS: "Database", // Use existing icon
+  FASTIFY: "Terminal"  // Use existing icon
+}
       const formattedPlaygroundData = playgrounds?.map((item)=>({
         id: item.id,
-        title: item.title,
-        starred: false,
+        name: item.title,
+        starred: item.Starmark[0]?.isMarked || false,
         icon: technologyIconMap[item.template] || "Code2"
       }))
     return (
         <SidebarProvider>
             <div className="flex min-h-screen w-full overflow-x-hidden">
                 {/* @ts-ignore */}
-                <DashboardSidebar initialPlaygrounds={formattedPlaygroundData || []}/>
+                <DashboardSidebar initialPlaygroundData={formattedPlaygroundData || []}/>
                 <main className="flex-1">
                     {children}
                 </main></div>
