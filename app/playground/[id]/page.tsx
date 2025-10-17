@@ -4,21 +4,44 @@ import { usePlayground } from '@/modules/playground/hooks/usePlayground';
 import { Separator } from '@radix-ui/react-dropdown-menu';
 import { TooltipProvider } from '@radix-ui/react-tooltip';
 import { useParams } from 'next/navigation'
-import React from 'react'
+import React, { useEffect } from 'react'
 import {TemplateFileTree} from '@/modules/playground/components/playgroundExplorer';
+import { useFileExplorer } from '@/modules/playground/hooks/useFileExplorer';
+import { TemplateFile } from '@prisma/client';
 
 function MainPlaygroundPage() {
     const {id} = useParams<{id:string}>();
     const {playgroundData,templateData,isLoading,error,saveTemplateData} = usePlayground(id)
-    console.log("templateData",templateData);
-    console.log("playgroundData",playgroundData)
-    const activeFile = "sample.txt"
+    const {
+      setTemplateData,
+      setPlaygroundId,
+      setOpenFiles,
+      setActiveFileId,
+      activeFileId,
+      closeAllFiles,
+      closeFile,
+      openFile,
+      openFiles
+    } = useFileExplorer(); 
+    useEffect(()=>{
+      setPlaygroundId(id);
+    },[id,setPlaygroundId]);
+    useEffect(()=>{
+     if(templateData && !openFiles.length){
+      setTemplateData(templateData)
+     }
+    },[templateData,setTemplateData,openFiles.length])
+    const activeFile = openFiles.find((file)=>file.id === activeFileId);
+     const hasUnsavedChanges = openFiles.some((file)=>file.hasUnsavedChanges);
+     const handleFileSelect = (file:TemplateFile){
+      openFile(file)
+     }
   return (
     <TooltipProvider>
       <>
       <TemplateFileTree 
       data={templateData!}
-      onFileSelect={()=>{}}
+      onFileSelect={handleFileSelect}
       selectedFile={activeFile}
       title ="File Explorer"
       onAddFile={()=>{}}
