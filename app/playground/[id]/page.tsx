@@ -12,14 +12,13 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@radix-ui/react-dropdown-menu";
+} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "@radix-ui/react-tooltip";
-import { Tabs, TabsList, TabsTrigger } from "@radix-ui/react-tabs";
+} from "@/components/ui/tooltip";
 
 import { usePlayground } from "@/modules/playground/hooks/usePlayground";
 import { useFileExplorer } from "@/modules/playground/hooks/useFileExplorer";
@@ -27,6 +26,13 @@ import { TemplateFileTree } from "@/modules/playground/components/playgroundExpl
 import { TemplateFile } from "@prisma/client";
 import { Separator } from "@/components/ui/separator";
 import PlaygroundEditor from "@/modules/playground/components/playgroundEditor";
+import { 
+  ResizableHandle, 
+  ResizablePanel, 
+  ResizablePanelGroup 
+} from "@/components/ui/resizable";
+import { useWebContainer } from "@/modules/webContainers/hooks/useWebContainer";
+import {WebContainerPreview} from "@/modules/webContainers/components/WebContainerPreview";
 
 function MainPlaygroundPage() {
   const { id } = useParams<{ id: string }>();
@@ -46,6 +52,15 @@ function MainPlaygroundPage() {
     openFile,
     openFiles,
   } = useFileExplorer();
+
+  const {
+    severUrl,
+    isLoading: webContainerLoading,
+    error: webContainerError,
+    instance: webContainerInstance,
+    writeFileSync,
+    destroy
+  } = useWebContainer({ templateData });
 
   useEffect(() => {
     setPlaygroundId(id);
@@ -216,15 +231,35 @@ function MainPlaygroundPage() {
           {/* Editor Area */}
           <div className="flex-1 overflow-hidden">
             {openFiles.length > 0 ? (
-              <div className="h-full w-full">
-                <PlaygroundEditor
-                  activeFile={activeFile}
-                  content={activeFile?.content || ""}
-                  onContentChange={(value) => {
-                    // Update file content in state
-                  }}
-                />
-              </div>
+              <ResizablePanelGroup direction="horizontal">
+                <ResizablePanel defaultSize={isPreviewVisible ? 50 : 100}>
+                  <div className="h-full w-full">
+                    <PlaygroundEditor
+                      activeFile={activeFile}
+                      content={activeFile?.content || ""}
+                      onContentChange={(value) => {
+                        // Update file content in state
+                      }}
+                    />
+                  </div>
+                </ResizablePanel>
+                
+                {isPreviewVisible && templateData && (
+                  <>
+                    <ResizableHandle />
+                    <ResizablePanel defaultSize={50}>
+                      <WebContainerPreview
+                        templateData={templateData}
+                        serverUrl={severUrl || ""}
+                        isLoading={webContainerLoading}
+                        error={webContainerError}
+                        instance={webContainerInstance}
+                        writeFileSync={writeFileSync}
+                      />
+                    </ResizablePanel>
+                  </>
+                )}
+              </ResizablePanelGroup>
             ) : (
               <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
                 No files open. Select a file from the sidebar.
