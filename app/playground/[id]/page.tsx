@@ -36,6 +36,7 @@ import { WebContainerPreview } from "@/modules/webContainers/components/WebConta
 import { TemplateFolder } from "@/modules/playground/lib/path-to-json";
 import { LoadingStep } from "@/modules/playground/components/loader";
 import { findFilePath } from "@/modules/playground/lib";
+import ToggleAI from "@/modules/playground/components/toggle-ai"
 import { toast } from "sonner";
 
 function MainPlaygroundPage() {
@@ -326,7 +327,7 @@ function MainPlaygroundPage() {
       <div className="flex h-screen w-full bg-background">
         
         <TemplateFileTree
-        {/* ts-ignore */}
+        /* ts-ignore */
           data={templateData!}
           onFileSelect={handleFileSelect}
           selectedFile={activeFile}
@@ -390,14 +391,10 @@ function MainPlaygroundPage() {
 
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <Button
-                      size="sm"
-                      variant="default"
-                      onClick={handleAIAssistant}
-                      aria-label="Open AI Assistant"
-                    >
-                      <Bot className="h-4 w-4" />
-                    </Button>
+                    <ToggleAI isEnabled={true}
+                    onToggle={()=>{}}
+                    suggestionLoading={false}
+                    />
                   </TooltipTrigger>
                   <TooltipContent>AI Assistant</TooltipContent>
                 </Tooltip>
