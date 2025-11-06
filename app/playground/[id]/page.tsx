@@ -38,6 +38,7 @@ import { LoadingStep } from "@/modules/playground/components/loader";
 import { findFilePath } from "@/modules/playground/lib";
 import ToggleAI from "@/modules/playground/components/toggle-ai"
 import { toast } from "sonner";
+import { UseAiSuggestions } from "@/modules/playground/hooks/useAiSuggestions";
 
 function MainPlaygroundPage() {
   const { id } = useParams<{ id: string }>();
@@ -45,7 +46,7 @@ function MainPlaygroundPage() {
 
   const { playgroundData, templateData, isLoading, error, saveTemplateData } =
     usePlayground(id);
-
+  const AiSuggestions = UseAiSuggestions();
   const {
     setTemplateData,
     setPlaygroundId,
@@ -391,9 +392,9 @@ function MainPlaygroundPage() {
 
                 <Tooltip>
                   <TooltipTrigger asChild>
-                    <ToggleAI isEnabled={true}
-                    onToggle={()=>{}}
-                    suggestionLoading={false}
+                    <ToggleAI isEnabled={AiSuggestions.isEnabled}
+                    onToggle={AiSuggestions.toggleEnabled}
+                    suggestionLoading={AiSuggestions.isLoading}
                     />
                   </TooltipTrigger>
                   <TooltipContent>AI Assistant</TooltipContent>
@@ -479,6 +480,13 @@ function MainPlaygroundPage() {
                       activeFile={activeFile}
                       content={activeFile?.content || ""}
                       onContentChange={(value)=>activeFileId&&updateFileContent(activeFileId, value)}
+                      suggestions={AiSuggestions.suggestions}
+                      suggestionLoading = {AiSuggestions.isLoading}
+                      suggestionPosition = {AiSuggestions.position}
+                      onAcceptSuggestion = {(editor,monaco)=>AiSuggestions.acceptSuggestion(editor,monaco)}
+                      onRejectSuggestion = {(editor)=>AiSuggestions.rejectSuggestion(editor)}
+                      onTriggerSuggestion = {(type,editor)=>AiSuggestions.fetchSuggestion(type,editor)}
+
                     />
                   </div>
                 </ResizablePanel>
