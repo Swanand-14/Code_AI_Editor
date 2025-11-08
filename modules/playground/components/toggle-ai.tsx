@@ -35,7 +35,7 @@ import {
 } from "lucide-react";
 import React from "react";
 import { cn } from "@/lib/utils";
-import { AIChatSidePanel } from "@/features/ai-chat/components/ai-chat-sidepanel";
+import {AIChatSidePanel} from "@/modules/ai-chat/components/ai-chat-sidepanel";
 
 
 interface ToggleAIProps {
@@ -191,6 +191,12 @@ const ToggleAI: React.FC<ToggleAIProps> = ({
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+      <AIChatSidePanel
+        isOpen={isChatOpen}
+        onClose={() => setIsChatOpen(false)}
+        theme="dark"
+        
+      />
 
     </>
   );
