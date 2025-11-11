@@ -476,7 +476,7 @@ function MainPlaygroundPage() {
               <ResizablePanelGroup direction="horizontal">
                 <ResizablePanel defaultSize={isPreviewVisible ? 50 : 100}>
                   <div className="h-full w-full">
-                    <PlaygroundEditor
+                    {/* <PlaygroundEditor
                       activeFile={activeFile}
                       content={activeFile?.content || ""}
                       onContentChange={(value)=>activeFileId&&updateFileContent(activeFileId, value)}
@@ -487,7 +487,13 @@ function MainPlaygroundPage() {
                       onRejectSuggestion = {(editor)=>AiSuggestions.rejectSuggestion(editor)}
                       onTriggerSuggestion = {(type,editor)=>AiSuggestions.fetchSuggestion(type,editor)}
 
-                    />
+                    /> */}
+                    <PlaygroundEditor
+  activeFile={activeFile}
+  content={activeFile?.content || ""}
+  onContentChange={(value) => activeFileId && updateFileContent(activeFileId, value)}
+  suggestionLoading={false}
+/>
                   </div>
                 </ResizablePanel>
 

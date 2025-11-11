@@ -155,3 +155,42 @@ export const UseAiSuggestions = ():UseAiSuggestionsReturn=>{
         clearSuggestions
     }
 }
+
+// import { useState, useCallback, useRef } from "react";
+
+// interface AISuggestionsState {
+//   suggestions: string | null;
+//   isLoading: boolean;
+//   position: { line: number; column: number } | null;
+//   decoration: string[];
+//   isEnabled: boolean;
+// }
+
+// interface UseAiSuggestionsReturn extends AISuggestionsState {
+//   toggleEnabled: () => void;
+//   setIsLoading: (loading: boolean) => void;
+// }
+
+// export const UseAiSuggestions = (): UseAiSuggestionsReturn => {
+//   const [state, setState] = useState<AISuggestionsState>({
+//     suggestions: null,
+//     isLoading: false,
+//     position: null,
+//     decoration: [],
+//     isEnabled: true,
+//   });
+
+//   const toggleEnabled = useCallback(() => {
+//     setState((prev) => ({ ...prev, isEnabled: !prev.isEnabled }));
+//   }, []);
+
+//   const setIsLoading = useCallback((loading: boolean) => {
+//     setState((prev) => ({ ...prev, isLoading: loading }));
+//   }, []);
+
+//   return {
+//     ...state,
+//     toggleEnabled,
+//     setIsLoading,
+//   };
+// };
