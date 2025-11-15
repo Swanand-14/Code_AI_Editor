@@ -36,6 +36,23 @@ model Account {
   @@map("accounts")
 }
 
+model GitHubRepository {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId      String   @db.ObjectId
+  repoId      Int      @unique
+  
+  repoFullName    String
+  
+  htmlUrl     String?
+  defaultBranch String
+  lastSyncedAt   DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, repoFullName])
+  
+
+  @@map("github_repositories")
+}
+
 model Session {
   id           String   @id @default(auto()) @map("_id") @db.ObjectId
   sessionToken String   @unique
@@ -60,6 +77,7 @@ model User {
   myplayground playground[]
   staredPlayground StarMark[]
   chatMessages  ChatMessage[]
+  githubRepositories GitHubRepository[]
   
 
   @@map("users")
