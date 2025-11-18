@@ -161,9 +161,122 @@ export class GitHubClient {
         sha: ref.object.sha,
       })
     } catch (error: any) {
-      throw new Error(`Failed to create branch: ${error.message}`)
+      if (error.status === 422) {
+      throw new Error(`Branch "${newBranch}" already exists`)
+    } else if (error.status === 404) {
+      throw new Error(`Branch "${fromBranch}" not found`)
+    }
+    throw new Error(`Failed to create branch: ${error.message}`)
+
+     
     }
   }
+
+  async pathExists(owner:string,repo:string,path:string,branch?:string):Promise<boolean>{
+      try {
+        await this.octokit.repos.getContent({
+          owner,repo,path,ref:branch
+        })
+        return true
+      } catch (error:any) {
+        if(error.status === 404){
+          return false
+        }
+        throw error
+      }
+  }
+
+  async createFile(owner:string,repo:string,path:string,content:string,message:string,branch?:string):Promise<{commit:string,content:{sha:string}}>{
+    try {
+      const exists = await this.pathExists(owner,repo,path,branch)
+      if(exists){
+        throw new Error("File already exists")
+      }
+
+      const {data} = await this.octokit.repos.createOrUpdateFileContents({
+        owner,repo,path,message,content:Buffer.from(content).toString("base64"),branch
+      })
+
+      return {
+        commit:data.commit.sha!,
+        content:{sha:data.content!.sha!}
+
+      }
+    } catch (error:any) {
+      throw new Error(`Failed to create a file: ${error.message}`)
+    }
+  }
+
+  async createDirectory(owner:string,repo:string,path:string,message:string,branch?:string):Promise<void>{
+    try {
+      const gitKeepPath = `${path}/.gitkeep`
+      await this.octokit.repos.createOrUpdateFileContents({
+        owner,
+        repo,
+        path:gitKeepPath,
+        message,
+        content:Buffer.from("").toString("base64"),
+        branch
+      })
+    } catch (error:any) {
+      throw new Error(`Failed to create a directory: ${error.message}`)
+    }
+  }
+
+  async deleteFile(
+  owner: string,
+  repo: string,
+  path: string,
+  message: string,
+  sha: string,
+  branch?: string
+): Promise<void> {
+  try {
+    await this.octokit.repos.deleteFile({
+      owner,
+      repo,
+      path,
+      message,
+      sha,
+      branch,
+    })
+  } catch (error: any) {
+    throw new Error(`Failed to delete file: ${error.message}`)
+  }
+}
+
+async deleteMultipleFiles(owner:string,repo:string,files:{path:string,sha:string}[],message:string,branch?:string):Promise<void>{
+  try {
+    const {data:refData} = await this.octokit.git.getRef({owner,repo,ref:`heads/${branch || 'main'}`})
+    const latestCommitSha = refData.object.sha
+    const {data:commitData} = await this.octokit.git.getCommit({
+      owner,repo,commit_sha:latestCommitSha
+    })
+    const baseTreeSha = commitData.tree.sha
+    const {data:newTree} = await this.octokit.git.createTree({
+      owner,repo,base_tree:baseTreeSha,
+      tree:files.map(file=>({
+        path:file.path,
+        mode:'100644' as any,
+        type:'blob' as any,
+        sha:null
+      }))
+    })
+
+    const {data:newCommit} = await this.octokit.git.createCommit({
+      owner,repo,message,tree:newTree.sha,parents:[latestCommitSha],
+    })
+
+    await this.octokit.git.updateRef({
+      owner,repo,
+      ref:`heads/${branch||'main'}`,
+      sha:newCommit.sha
+    })
+  } catch (error:any) {
+    throw new Error(`Failed to delete multiple files : ${error.message}`)
+  }
+}
+
 
   
 

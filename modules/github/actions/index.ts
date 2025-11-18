@@ -5,6 +5,7 @@ import { GitHubClient } from "../lib/github-client"
 import { prisma } from "@/lib/db"
 import { auth } from "@/auth"
 import { revalidatePath } from "next/cache"
+import { success } from "zod"
 
 export async function fetchUserRepositories() {
   try {
@@ -111,5 +112,79 @@ export async function getUserLinkedRepos() {
   } catch (error: any) {
     console.error("Error fetching linked repositories:", error)
     return { success: false, error: error.message || "Failed to fetch linked repositories" }
+  }
+}
+
+export async function createFileInGitHub(
+  owner: string,
+  repo: string,
+  path: string,
+  content: string,
+  message: string,
+  branch?: string
+) {
+  try {
+    const token = await requireGitHubToken()
+    const githubClient = new GitHubClient(token)
+    const result = await githubClient.createFile(owner, repo, path, content, message, branch)
+    return { success: true, data: result }
+  } catch (error: any) {
+    console.error("Error creating file in GitHub:", error)
+    return { success: false, error: error.message || "Failed to create file" }
+  }
+}
+
+export async function createFolderInGitHub(
+  owner: string,
+  repo: string,
+  path: string,
+  message: string,
+  branch?: string
+) {
+  try {
+    const token = await requireGitHubToken()
+    const githubClient = new GitHubClient(token)
+    await githubClient.createDirectory(owner, repo, path, message, branch)
+    return { success: true }
+  } catch (error: any) {
+    console.error("Error creating folder in GitHub:", error)
+    return { success: false, error: error.message || "Failed to create folder" }
+  }
+}
+
+export async function deleteFileFromGitHub(
+  owner: string,
+  repo: string,
+  path: string,
+  message: string,
+  sha: string,
+  branch?: string
+) {
+  try {
+    const token = await requireGitHubToken()
+    const githubClient = new GitHubClient(token)
+    await githubClient.deleteFile(owner, repo, path, message, sha, branch)
+    return { success: true }
+  } catch (error: any) {
+    console.error("Error deleting file from GitHub:", error)
+    return { success: false, error: error.message || "Failed to delete file" }
+  }
+}
+
+export async function deleteFolderFromGithub(owner:string,repo:string,folderPath:string,message:string,
+  files:{path:string;sha:string}[],branch?:string
+){
+  try {
+    const token = await requireGitHubToken()
+    const githubClient = new GitHubClient(token);
+    const filesTodelete = files.filter(file=>file.path.startsWith(folderPath+'/')||file.path === folderPath)
+    if(filesTodelete.length === 0){ 
+      return {success:false,error:"No files found in folder"}
+    }
+
+    await githubClient.deleteMultipleFiles(owner,repo,filesTodelete,message,branch)
+    return {success:true,deleteCount:filesTodelete.length}
+  } catch (error:any) {
+    return {success:false,error:error.message || "Failed to delete folder"}
   }
 }

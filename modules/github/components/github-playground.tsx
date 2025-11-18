@@ -1,16 +1,37 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { fetchRepositoryTree, fetchFileContent, saveFileToGitHub } from "../actions"
+import { useRouter } from "next/navigation"
+import { 
+  fetchRepositoryTree, 
+  fetchFileContent, 
+  saveFileToGitHub, 
+  createFileInGitHub, 
+  createFolderInGitHub, 
+  deleteFileFromGitHub, 
+  deleteFolderFromGithub 
+} from "../actions"
 import { GitHubFileTree } from "./github-file-tree"
 import { BranchSelector } from "./branch-selector"
 import PlaygroundEditor from "@/modules/playground/components/playgroundEditor"
 import { Button } from "@/components/ui/button"
-import { Save, GitCommit, Loader2, RefreshCw } from "lucide-react"
+import { GitCommit, Loader2, RefreshCw, ArrowLeft } from "lucide-react"
 import { toast } from "sonner"
 import { Input } from "@/components/ui/input"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { 
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { NewFileDialog } from "./dialogs/new-file-dialog"
+import { NewFolderDialog } from "./dialogs/new-folder-dialog"
 
 interface GitHubFile {
   name: string
@@ -40,6 +61,15 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
   const [commitDialogOpen, setCommitDialogOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState("")
   const [commitDescription, setCommitDescription] = useState("")
+  const [newFileDialogOpen, setNewFileDialogOpen] = useState(false)
+  const [newFolderDialogOpen, setNewFolderDialogOpen] = useState(false)
+  const [currentContextPath, setCurrentContextPath] = useState("")
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [fileToDelete, setFileToDelete] = useState<GitHubFile | null>(null)
+  const [deleteFolderDialogOpen, setDeleteFolderDialogOpen] = useState(false)
+  const [folderToDelete, setFolderToDelete] = useState<{ path: string; name: string } | null>(null)
+  
+  const router = useRouter()
 
   useEffect(() => {
     loadRepositoryTree()
@@ -143,13 +173,147 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
       setCommitDescription("")
       setCommitDialogOpen(false)
       
-      // Reload tree to update SHAs
       await loadRepositoryTree()
     } else {
       toast.error(result.error || "Failed to commit changes")
     }
     
     setIsSaving(false)
+  }
+
+  function handleCreateFileClick(path: string) {
+    setCurrentContextPath(path)
+    setNewFileDialogOpen(true)
+  }
+
+  async function handleCreateFile(path: string, filename: string) {
+    const fullPath = path ? `${path}/${filename}` : filename
+    
+    const result = await createFileInGitHub(
+      owner,
+      repo,
+      fullPath,
+      "",
+      `Create ${filename}`,
+      currentBranch
+    )
+
+    if (result.success) {
+      toast.success(`Created ${filename}`)
+      await loadRepositoryTree()
+      
+      const newFile: GitHubFile = {
+        name: filename,
+        path: fullPath,
+        sha: result.data.content.sha,
+        size: 0,
+        type: "file"
+      }
+
+      handleFileSelect(newFile)
+    } else {
+      throw new Error(result.error || "Failed to create file")
+    }
+  }
+
+  function handleCreateFolderClick(path: string) {
+    setCurrentContextPath(path)
+    setNewFolderDialogOpen(true)
+  }
+
+  async function handleCreateFolder(path: string, folderName: string) {
+    const fullPath = path ? `${path}/${folderName}` : folderName
+
+    const result = await createFolderInGitHub(
+      owner,
+      repo,
+      fullPath,
+      `Create ${folderName} folder`,
+      currentBranch
+    )
+    
+    if (result.success) {
+      toast.success(`Created ${folderName} folder`)
+      await loadRepositoryTree()
+    } else {
+      throw new Error(result.error || "Failed to create folder")
+    }
+  }
+
+  function handleDeleteFileClick(file: GitHubFile) {
+    setFileToDelete(file)
+    setDeleteDialogOpen(true)
+  }
+
+  async function handleDeleteFile() {
+    if (!fileToDelete) return
+
+    const result = await deleteFileFromGitHub(
+      owner,
+      repo,
+      fileToDelete.path,
+      `Delete ${fileToDelete.name}`,
+      fileToDelete.sha,
+      currentBranch
+    )
+
+    if (result.success) {
+      toast.success(`Deleted ${fileToDelete.name}`)
+      
+      if (openFile?.path === fileToDelete.path) {
+        setOpenFile(null)
+      }
+      
+      await loadRepositoryTree()
+      setDeleteDialogOpen(false)
+      setFileToDelete(null)
+    } else {
+      toast.error(result.error || "Failed to delete file")
+    }
+  }
+
+  function handleDeleteFolderClick(folderPath: string, folderName: string) {
+    setFolderToDelete({ path: folderPath, name: folderName })
+    setDeleteFolderDialogOpen(true)
+  }
+
+  async function handleDeleteFolder() {
+    if (!folderToDelete) return
+
+    const filesToDelete = files
+      .filter(file => 
+        file.path.startsWith(folderToDelete.path + '/') || 
+        file.path === folderToDelete.path
+      )
+      .map(file => ({ path: file.path, sha: file.sha }))
+    
+    if (filesToDelete.length === 0) {
+      toast.error("No files found in folder")
+      return
+    }
+
+    const result = await deleteFolderFromGithub(
+      owner,
+      repo,
+      folderToDelete.path,
+      `Delete ${folderToDelete.name} folder`,
+      filesToDelete,
+      currentBranch
+    )
+
+    if (result.success) {
+      toast.success(`Deleted ${folderToDelete.name} folder (${result.deletedCount} files)`)
+      
+      if (openFile && openFile.path.startsWith(folderToDelete.path + '/')) {
+        setOpenFile(null)
+      }
+      
+      await loadRepositoryTree()
+      setDeleteFolderDialogOpen(false)
+      setFolderToDelete(null)
+    } else {
+      toast.error(result.error || "Failed to delete folder")
+    }
   }
 
   // Keyboard shortcut for save
@@ -172,6 +336,16 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
       {/* File Tree Sidebar */}
       <div className="w-64 border-r bg-muted/30 overflow-auto flex flex-col">
         <div className="p-4 border-b space-y-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => router.push("/dashboard")}
+            className="w-full justify-start"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Dashboard
+          </Button>
+          
           <div>
             <h2 className="font-semibold">{repo}</h2>
             <p className="text-xs text-muted-foreground">{owner}</p>
@@ -189,9 +363,9 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
               size="icon"
               onClick={loadRepositoryTree}
               disabled={isLoadingTree}
-              className="h-8 w-8"
+              className="h-6 w-6"
             >
-              <RefreshCw className={`h-4 w-4 ${isLoadingTree ? "animate-spin" : ""}`} />
+              <RefreshCw className={`h-3 w-3 ${isLoadingTree ? "animate-spin" : ""}`} />
             </Button>
           </div>
         </div>
@@ -206,6 +380,10 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
               files={files}
               onFileSelect={handleFileSelect}
               selectedPath={openFile?.path}
+              onCreateFile={handleCreateFileClick}
+              onCreateFolder={handleCreateFolderClick}
+              onDeleteFile={handleDeleteFileClick}
+              onDeleteFolder={handleDeleteFolderClick}
             />
           )}
         </div>
@@ -353,6 +531,75 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* New File Dialog */}
+      <NewFileDialog
+        open={newFileDialogOpen}
+        onOpenChange={setNewFileDialogOpen}
+        onCreateFile={handleCreateFile}
+        currentPath={currentContextPath}
+      />
+
+      {/* New Folder Dialog */}
+      <NewFolderDialog
+        open={newFolderDialogOpen}
+        onOpenChange={setNewFolderDialogOpen}
+        onCreateFolder={handleCreateFolder}
+        currentPath={currentContextPath}
+      />
+
+      {/* Delete File Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete File</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{fileToDelete?.name}</strong>?
+              This will create a commit and cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteFile}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Folder Confirmation Dialog */}
+      <AlertDialog open={deleteFolderDialogOpen} onOpenChange={setDeleteFolderDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Folder</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete the folder <strong>{folderToDelete?.name}</strong> and all its contents?
+              <br />
+              <br />
+              This will delete{" "}
+              <strong>
+                {files.filter(file => 
+                  file.path.startsWith((folderToDelete?.path || "") + '/') || 
+                  file.path === folderToDelete?.path
+                ).length}
+              </strong>{" "}
+              file(s) and create a commit. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteFolder}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete Folder
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   )
 }
