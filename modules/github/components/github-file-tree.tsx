@@ -26,7 +26,9 @@ interface FileTreeProps {
   onCreateFile?: (path: string) => void
   onCreateFolder?: (path: string) => void
   onDeleteFile?: (file: GitHubFile) => void
-  onDeleteFolder?: (folderPath: string, folderName: string) => void // ✅ Added
+  onDeleteFolder?: (folderPath: string, folderName: string) => void 
+  expandedDirs?: Set<string> 
+  onExpandedDirsChange?: (dirs: Set<string>) => void 
 }
 
 export function GitHubFileTree({ 
@@ -36,7 +38,9 @@ export function GitHubFileTree({
   onCreateFile,
   onCreateFolder,
   onDeleteFile,
-  onDeleteFolder 
+  onDeleteFolder ,
+  expandedDirs: controlledExpandedDirs, 
+  onExpandedDirsChange 
 }: FileTreeProps) {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([""]))
 

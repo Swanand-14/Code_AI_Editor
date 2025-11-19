@@ -345,7 +345,7 @@ function TemplateNode({
   } else {
     const folder = item as TemplateFolder;
     const folderName = folder.folderName;
-    const currentPath = path ? '{path}/{folderName}' : folderName;
+    const currentPath = path ?  `${path}/${folderName}` : folderName;
 
     const handleAddFile = () => {
       setIsNewFileDialogOpen(true);

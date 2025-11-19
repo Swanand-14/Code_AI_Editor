@@ -68,6 +68,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
   const [fileToDelete, setFileToDelete] = useState<GitHubFile | null>(null)
   const [deleteFolderDialogOpen, setDeleteFolderDialogOpen] = useState(false)
   const [folderToDelete, setFolderToDelete] = useState<{ path: string; name: string } | null>(null)
+  const [expandedDirs,setExpandedDirs] = useState<Set<string>>(new Set([""]))
   
   const router = useRouter()
 
@@ -92,6 +93,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
     // Close current file when switching branches
     setOpenFile(null)
     setCurrentBranch(branch)
+    setExpandedDirs(new Set([""]))
     toast.success(`Switched to ${branch}`)
   }
 
@@ -200,7 +202,11 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
 
     if (result.success) {
       toast.success(`Created ${filename}`)
-      await loadRepositoryTree()
+      
+      if (path) {
+        setExpandedDirs(prev => new Set([...prev, path]))
+      }
+      //await loadRepositoryTree()
       
       const newFile: GitHubFile = {
         name: filename,
@@ -209,7 +215,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
         size: 0,
         type: "file"
       }
-
+      setFiles(prev => [...prev, newFile])
       handleFileSelect(newFile)
     } else {
       throw new Error(result.error || "Failed to create file")
@@ -234,7 +240,21 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
     
     if (result.success) {
       toast.success(`Created ${folderName} folder`)
-      await loadRepositoryTree()
+       if (path) {
+        setExpandedDirs(prev => new Set([...prev, path, fullPath]))
+      } else {
+        setExpandedDirs(prev => new Set([...prev, fullPath]))
+      }
+      //await loadRepositoryTree()
+      const gitkeepPath = `${fullPath}/.gitkeep`
+  const newFile: GitHubFile = {
+    name: ".gitkeep",
+    path: gitkeepPath,
+    sha: result.data?.content?.sha || result.data?.commit?.sha || "",
+    size: 0,
+    type: "file"
+  }
+  setFiles(prev => [...prev, newFile])
     } else {
       throw new Error(result.error || "Failed to create folder")
     }
@@ -263,8 +283,8 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
       if (openFile?.path === fileToDelete.path) {
         setOpenFile(null)
       }
-      
-      await loadRepositoryTree()
+     setFiles(prev => prev.filter(f => f.path !== fileToDelete.path))
+      //await loadRepositoryTree()
       setDeleteDialogOpen(false)
       setFileToDelete(null)
     } else {
@@ -307,8 +327,22 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
       if (openFile && openFile.path.startsWith(folderToDelete.path + '/')) {
         setOpenFile(null)
       }
+      setExpandedDirs(prev => {
+        const next = new Set(prev)
+        next.delete(folderToDelete.path)
+        
+        Array.from(next).forEach(path => {
+          if (path.startsWith(folderToDelete.path + '/')) {
+            next.delete(path)
+          }
+        })
+        return next
+      })
       
-      await loadRepositoryTree()
+       setFiles(prev => prev.filter(file => 
+    !file.path.startsWith(folderToDelete.path + '/') && 
+    file.path !== folderToDelete.path
+  ))
       setDeleteFolderDialogOpen(false)
       setFolderToDelete(null)
     } else {
@@ -384,6 +418,8 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
               onCreateFolder={handleCreateFolderClick}
               onDeleteFile={handleDeleteFileClick}
               onDeleteFolder={handleDeleteFolderClick}
+              expandedDirs={expandedDirs} 
+              onExpandedDirsChange={setExpandedDirs}
             />
           )}
         </div>
