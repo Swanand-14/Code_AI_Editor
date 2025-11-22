@@ -15,7 +15,7 @@ import { GitHubFileTree } from "./github-file-tree"
 import { BranchSelector } from "./branch-selector"
 import PlaygroundEditor from "@/modules/playground/components/playgroundEditor"
 import { Button } from "@/components/ui/button"
-import { GitCommit, Loader2, RefreshCw, ArrowLeft } from "lucide-react"
+import { GitCommit, Loader2, RefreshCw, ArrowLeft ,GitCompare} from "lucide-react"
 import { toast } from "sonner"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { NewFileDialog } from "./dialogs/new-file-dialog"
 import { NewFolderDialog } from "./dialogs/new-folder-dialog"
+import { DiffViewer } from "./diff-viewer"
 
 interface GitHubFile {
   name: string
@@ -69,6 +70,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
   const [deleteFolderDialogOpen, setDeleteFolderDialogOpen] = useState(false)
   const [folderToDelete, setFolderToDelete] = useState<{ path: string; name: string } | null>(null)
   const [expandedDirs,setExpandedDirs] = useState<Set<string>>(new Set([""]))
+  const [showDiff,setShowDiff] = useState(false)
   
   const router = useRouter()
 
@@ -174,6 +176,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
       setCommitMessage("")
       setCommitDescription("")
       setCommitDialogOpen(false)
+      setShowDiff(false)
       
       await loadRepositoryTree()
     } else {
@@ -453,6 +456,13 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
           <div className="flex items-center gap-2">
             {openFile?.hasChanges && (
               <>
+              <Button onClick={()=>setShowDiff(!showDiff)}
+              variant="outline"
+              size="sm"
+              >
+                <GitCompare className="h-4 w-4 mr-2"/>
+                {showDiff? "Hide Diff":"View Diff"}
+              </Button>
                 <Button
                   onClick={() => {
                     if (window.confirm("Discard all changes?")) {
@@ -461,6 +471,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
                         content: openFile.originalContent,
                         hasChanges: false,
                       })
+                      setShowDiff(false)
                     }
                   }}
                   variant="ghost"
@@ -478,29 +489,39 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
         </div>
 
         {/* Editor */}
-        <div className="flex-1 overflow-hidden">
-          {isLoadingFile ? (
-            <div className="flex items-center justify-center h-full">
-              <Loader2 className="h-8 w-8 animate-spin" />
-            </div>
-          ) : openFile ? (
-            <PlaygroundEditor
-              activeFile={{
-                filename: openFile.path.split("/").pop()?.split(".")[0] || "file",
-                fileExtension: openFile.path.split(".").pop() || "txt",
-                content: openFile.content,
-              }}
-              content={openFile.content}
-              onContentChange={handleContentChange}
-              suggestionLoading={false}
-            />
-          ) : (
-            <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-              <p className="text-lg">Select a file to start editing</p>
-              <p className="text-sm mt-2">Changes will be committed to {currentBranch}</p>
-            </div>
-          )}
-        </div>
+       <div className="flex-1 overflow-hidden">
+  {isLoadingFile ? (
+    <div className="flex items-center justify-center h-full">
+      <Loader2 className="h-8 w-8 animate-spin" />
+    </div>
+  ) : openFile ? (
+    // REPLACE THIS ENTIRE SECTION
+    showDiff ? (
+      <DiffViewer
+        originalContent={openFile.originalContent}
+        modifiedContent={openFile.content}
+        filepath={openFile.path}
+        onClose={() => setShowDiff(false)}
+      />
+    ) : (
+      <PlaygroundEditor
+        activeFile={{
+          filename: openFile.path.split("/").pop()?.split(".")[0] || "file",
+          fileExtension: openFile.path.split(".").pop() || "txt",
+          content: openFile.content,
+        }}
+        content={openFile.content}
+        onContentChange={handleContentChange}
+        suggestionLoading={false}
+      />
+    )
+  ) : (
+    <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+      <p className="text-lg">Select a file to start editing</p>
+      <p className="text-sm mt-2">Changes will be committed to {currentBranch}</p>
+    </div>
+  )}
+</div>
       </div>
 
       {/* Commit Dialog */}
