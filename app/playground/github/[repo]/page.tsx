@@ -1,21 +1,26 @@
 import { Suspense } from "react"
 import { redirect } from "next/navigation"
 import { auth } from "@/auth"
+import { notFound } from "next/navigation"
 import GitHubPlayground from "@/modules/github/components/github-playground"
 import { Loader2 } from "lucide-react"
 
 export default async function GitHubPlaygroundPage({
   params,
 }: {
-  params: { repo: string }
+  params:Promise<{ repo: string }>
 }) {
   const session = await auth()
   
   if (!session) {
     redirect("/auth/signin")
   }
+  const resolvedParams = await params
+  const repoFullName = decodeURIComponent(resolvedParams.repo)
 
-  const repoFullName = decodeURIComponent(params.repo)
+  if (!repoFullName.includes("/")) {
+    notFound()
+  }
 
   return (
     <Suspense

@@ -78,17 +78,33 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
     loadRepositoryTree()
   }, [currentBranch])
 
-  async function loadRepositoryTree() {
+  async function loadRepositoryTree(retryCount =0,maxTries = 3) {
+
     setIsLoadingTree(true)
-    const result = await fetchRepositoryTree(owner, repo, currentBranch)
-    
-    if (result.success) {
-      setFiles(result.data)
-    } else {
-      toast.error(result.error || "Failed to load repository")
+    try {
+      const result = await fetchRepositoryTree(owner, repo, currentBranch)
+      
+      if (result.success) {
+        setFiles(result.data)
+      } else {
+        if(retryCount<maxTries && result.error?.includes("404")){
+          toast.loading(`Repository initializing ...Retry ${retryCount+1}/${maxTries}`,{
+            id:"load-tree"
+          })
+
+          await new Promise(resolve=>setTimeout(resolve,2000))
+          return loadRepositoryTree(retryCount+1,maxTries)
+        }
+        toast.error(result.error || "Failed to load respository")
+      }
+    } catch (error) {
+      console.error("Error loading tree",error)
+      toast.error("Failed to load repository")
+    }finally{
+      setIsLoadingTree(false)
     }
     
-    setIsLoadingTree(false)
+    
   }
 
   function handleBranchChange(branch: string) {

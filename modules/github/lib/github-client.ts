@@ -24,6 +24,19 @@ export interface GitHubRepo{
     default_branch:string;
 }
 
+interface CreateRepoParams {
+  name:string,
+  description:string,
+  isPrivate:boolean,
+  initializeWithReadme:boolean,
+  addGitIgnore:boolean
+}
+
+interface FileToCommit{
+  path:string,
+  content:string
+}
+
 export class GitHubClient {
   private octokit: Octokit
 
@@ -277,7 +290,188 @@ async deleteMultipleFiles(owner:string,repo:string,files:{path:string,sha:string
   }
 }
 
+async createRepository(params:CreateRepoParams,files:FileToCommit[]){
+  try {
+    const {data:user} = await this.octokit.users.getAuthenticated()
+    const {data:repo} = await this.octokit.repos.createForAuthenticatedUser({
+      name:params.name,
+      description:params.description,
+      private:params.isPrivate,
+      auto_init:true
+    })
+    await new Promise(resolve => setTimeout(resolve, 2000))
+
+
+    let sha:string
+    try {
+      const {data:ref} = await this.octokit.git.getRef({
+        owner:user.login,
+        repo:repo.name,
+        ref:"heads/main"
+      })
+      sha = ref.object.sha
+    } catch{
+      const readMeContent = params.initializeWithReadme?
+      `#${params.name}\n\n${params.description || "No description provided"}`:"#Intial Commit"
+
+      const {data:readmeBlob} = await this.octokit.git.createBlob({
+        owner:user.login,
+        repo:params.name,
+        content:Buffer.from(readMeContent).toString("base64"),
+        encoding:"base64"
+      })
+
+      const {data:initialTree} = await this.octokit.git.createTree({
+        owner:user.login,
+        repo:params.name,
+        tree:[
+          {
+            path:"README.md",
+            mode:"100644",
+            type:"blob",
+            sha:readmeBlob.sha
+          }
+        ]
+      })
+
+      const {data:InitialCommit} = await this.octokit.git.createCommit({
+        owner:user.login,
+        repo:params.name,
+        message:"Initial commit",
+        tree:initialTree.sha
+      })
+
+      await this.octokit.git.createRef({
+        owner:user.login,
+        repo:params.name,
+        ref:"refs/heads/main",
+        sha:InitialCommit.sha
+      })
+
+      sha = InitialCommit.sha
+
+    }
+
+    const blobs = await Promise.all(
+      files.map(async(file)=>{
+        const {data:blob} = await this.octokit.git.createBlob({
+          owner:user.login,
+          repo:params.name,
+          content:Buffer.from(file.content).toString("base64"),
+          encoding:"base64"
+        })
+
+        return {
+          path:file.path,
+          mode:"100644" as const,
+          type:"blob" as const,
+          sha:blob.sha
+        }
+      })
+    )
+
+    if(params.addGitIgnore){
+      const gitIgnoreContent = `# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+build/
+out/
+.next/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Testing
+coverage/
+.nyc_output/
+
+# Temporary files
+*.tmp
+.cache/`
+
+const {data:gitignoreBlob} = await this.octokit.git.createBlob({
+  owner:user.login,
+  repo:params.name,
+  content:Buffer.from(gitIgnoreContent).toString("base64"),
+  encoding:"base64"
+})
+blobs.push({
+  path:".gitignore",
+  mode:"100644",
+  type:"blob",
+  sha:gitignoreBlob.sha
+})
+    }
+
+  const {data:newTree} = await this.octokit.git.createTree({
+    owner:user.login,
+    repo:params.name,
+    base_tree:sha,
+    tree:blobs
+  })
+
+  const {data:finalCommit} = await this.octokit.git.createCommit({
+    owner:user.login,
+    repo:params.name,
+    message:"Add playground files",
+    tree:newTree.sha,
+    parents:[sha],
+  })
+
+  await this.octokit.git.updateRef({
+    owner:user.login,
+    repo:params.name,
+    ref:"heads/main",
+    sha:finalCommit.sha
+  })
+
+  await this.octokit.repos.get({
+    owner:user.login,
+    repo:repo.name
+  })
+
+  return {
+    fullName:`${user.login}/${params.name}`,
+    url:repo.html_url,
+    owner:user.login,
+    name:params.name,
+    repoId:repo.id,
+    defaultBranch:"main"
+  }
+  } catch (error:any) {
+    throw new Error(`Failed to create repository: ${error.message}`)
+    
+  }
+}
+
 
   
 
 }
+
+
+
+

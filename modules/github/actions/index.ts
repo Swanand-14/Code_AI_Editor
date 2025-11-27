@@ -78,10 +78,15 @@ export async function linkRepositoryToUser(repoFullName: string, repoId: number,
         },
       },
       create: {
-        userId: session.user.id,
+        
         repoFullName: repoFullName,
         repoId: repoId,
         defaultBranch: defaultBranch,
+        user:{
+          connect:{
+            id:session.user.id
+          }
+        }
       },
       update: {
         lastSyncedAt: new Date(),
@@ -186,5 +191,43 @@ export async function deleteFolderFromGithub(owner:string,repo:string,folderPath
     return {success:true,deleteCount:filesTodelete.length}
   } catch (error:any) {
     return {success:false,error:error.message || "Failed to delete folder"}
+  }
+}
+
+interface CreateRepoParams {
+  name:string,
+  description:string,
+  isPrivate:boolean,
+  initializeWithReadme:boolean,
+  addGitIgnore:boolean
+}
+
+interface FileToCommit{
+  path:string,
+  content:string
+}
+
+
+export async function createGitHubRepository(params:CreateRepoParams,files:FileToCommit[]){
+  try {
+    const session = await auth()
+    if(!session?.user?.id){
+      return {success:false,error:"Unauthenticated"}
+    }
+    const token = await requireGitHubToken()
+
+    const githubClient = new GitHubClient(token)
+    const result = await githubClient.createRepository(params,files)
+    await linkRepositoryToUser(result.fullName,result.repoId,result.defaultBranch)
+
+    return {
+      success:true,
+      data:result
+    }
+
+  } catch (error:any) {
+    console.error("Error creating GitHub repository:",error)
+    return {success:false,error:error.message || "Failed to create repository"}
+    
   }
 }
