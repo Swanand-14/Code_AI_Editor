@@ -39,10 +39,17 @@ import { findFilePath } from "@/modules/playground/lib";
 import ToggleAI from "@/modules/playground/components/toggle-ai"
 import { toast } from "sonner";
 import { UseAiSuggestions } from "@/modules/playground/hooks/useAiSuggestions";
+import { Github } from "lucide-react";
+import { CreateGithubRepoDialog,RepoCreationData } from "@/modules/playground/components/dialogs/create-github-repo-dialog";
+import { createGitHubRepository } from "@/modules/github/actions";
+import { convertTemplateToFiles } from "@/modules/playground/lib/template-to-files";
+import { useRouter } from "next/navigation";
 
 function MainPlaygroundPage() {
   const { id } = useParams<{ id: string }>();
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
+  const [createRepoDialogOpen, setCreateRepoDialogOpen] = useState(false);
+  const router = useRouter();
 
   const { playgroundData, templateData, isLoading, error, saveTemplateData } =
     usePlayground(id);
@@ -81,11 +88,50 @@ function MainPlaygroundPage() {
     setPlaygroundId(id);
   }, [id, setPlaygroundId]);
 
+
+  
+
   useEffect(() => {
     if (templateData && !openFiles.length) {
       setTemplateData(templateData);
     }
   }, [templateData, setTemplateData, openFiles.length]);
+
+  const handleCreateRepo = async (data: RepoCreationData) => {
+    if(!templateData){
+      toast.error("No template data available")
+      return
+    }
+
+    try {
+      const files = convertTemplateToFiles(templateData)
+      const result = await createGitHubRepository(data,files);
+      if(result.success){
+         toast.success(
+        `Repository "${data.name}" created successfully!`,
+        { id: "create-repo" }
+      )
+
+      // ✅ Add longer delay for GitHub to fully initialize
+     toast.loading("Waiting for GitHub to initialize repository...", { id: "redirect" })
+      
+      // Wait 3 seconds before redirecting
+      await new Promise(resolve => setTimeout(resolve, 7000));
+      toast.success("Repository ready!", { id: "redirect" })
+      const encodedRepoFullName = encodeURIComponent(result.data.fullName)
+      router.push(`/playground/github/${encodedRepoFullName}`)
+
+      }else{
+        toast.error(result.error || "Failed to create repository")
+      }
+
+
+    } catch (error) {
+      console.error("Create repo error",error)
+      toast.error("An error occured while creating the repository")
+      
+    }
+  }
 
   const wrappedHandleAddFile = useCallback(
     (newFile: TemplateFile, parentPath: string) => {
@@ -360,6 +406,20 @@ function MainPlaygroundPage() {
 
               <div className="flex items-center gap-2">
                 <Tooltip>
+    <TooltipTrigger asChild>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => setCreateRepoDialogOpen(true)}
+        aria-label="Create GitHub Repository"
+      >
+        <Github className="h-4 w-4 mr-2" />
+        Push to GitHub
+      </Button>
+    </TooltipTrigger>
+    <TooltipContent>Create GitHub Repository</TooltipContent>
+  </Tooltip>
+                <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       size="sm"
@@ -418,6 +478,12 @@ function MainPlaygroundPage() {
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
+                <CreateGithubRepoDialog
+  open={createRepoDialogOpen}
+  onOpenChange={setCreateRepoDialogOpen}
+  onCreateRepo={handleCreateRepo}
+  playGroundName={playgroundData?.name || "playground"}
+/>
               </div>
             </div>
           </header>
