@@ -8,6 +8,7 @@ export interface TemplateFile {
   filename: string;
   fileExtension: string;
   content: string;
+  path?: string; // 🔥 FIX: Add path to distinguish files with same name in different dirs
 }
 
 /**
@@ -131,12 +132,14 @@ export async function scanTemplateDirectory(
  * @param folderName - Name of the current folder
  * @param folderPath - Path to the current folder
  * @param options - Scanning options
+ * @param basePath - The accumulated path from root (used to add path to files)
  * @returns Promise resolving to a TemplateFolder object
  */
 async function processDirectory(
   folderName: string, 
   folderPath: string, 
-  options: ScanOptions
+  options: ScanOptions,
+  basePath: string = ''  // 🔥 FIX: Add basePath parameter
 ): Promise<TemplateFolder> {
   try {
     // Read directory contents
@@ -157,7 +160,9 @@ async function processDirectory(
         }
         
         // If it's a directory, process it recursively
-        const subFolder = await processDirectory(entryName, entryPath, options);
+        // 🔥 FIX: Pass down the accumulated basePath
+        const newBasePath = basePath ? `${basePath}/${entryName}` : entryName;
+        const subFolder = await processDirectory(entryName, entryPath, options, newBasePath);
         items.push(subFolder);
       } else if (entry.isFile()) {
         // Skip ignored files
@@ -186,19 +191,23 @@ async function processDirectory(
             content = await fs.promises.readFile(entryPath, 'utf8');
           }
           
+          // 🔥 FIX: Add path to file object
           items.push({
             filename: parsedPath.name,
             fileExtension: parsedPath.ext.replace(/^\./, ''), // Remove leading dot
-            content
+            content,
+            path: basePath  // Add path information directly
           });
         } catch (error) {
           console.error(`Error reading file ${entryPath}:`, error);
           // Still include the file but with an error message as content
           const parsedPath = path.parse(entryName);
+          // 🔥 FIX: Add path to file object even for errors
           items.push({
             filename: parsedPath.name,
             fileExtension: parsedPath.ext.replace(/^\./, ''),
-            content: `Error reading file: ${(error as Error).message}`
+            content: `Error reading file: ${(error as Error).message}`,
+            path: basePath  // Add path information directly
           });
         }
       }

@@ -1,292 +1,411 @@
 "use client";
-import { WebContainer } from "@webcontainer/api";
+
 import React, { useEffect, useRef, useState } from "react";
-import { TemplateFolder } from "@/modules/playground/lib/path-to-json"; 
-import { transformToWebContainerFormat } from "../hooks/transformer";
-import { Loader2, XCircle, CheckCircle } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
-import { set } from "zod";
-import { start } from "repl";
+import { Loader2, XCircle, RefreshCw, Terminal as TerminalIcon, ArrowLeft, ArrowRight, Globe } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import TerminalComponent from "./terminal";
+import { cn } from "@/lib/utils";
 
 interface WebContainerPreviewProps {
-  templateData: TemplateFolder;
-  serverUrl: string;
+  serverUrl: string | null;
   isLoading: boolean;
   error: string | null;
-  instance: WebContainer | null;
-  writeFileSync: (path: string, content: string) => Promise<void>;
-  forceResetup?: boolean;
+  instance: any;
+  onRestartServer?: () => Promise<void>;
+  className?: string;
+  templateData?: any; // 🔥 FIX: Add templateData to listen for file changes
 }
 
 export const WebContainerPreview = ({
-  templateData,
   serverUrl,
   isLoading,
   error,
   instance,
-  writeFileSync,
-  forceResetup = false
+  onRestartServer,
+  className,
+  templateData, // 🔥 FIX: Accept templateData
 }: WebContainerPreviewProps) => {
-  const [previewUrl, setPreviewUrl] = useState<string>("");
-  const [loadingState, setLoadingState] = useState({
-    installing: false,
-    starting: false,
-    ready: false,
-    mounting: false,
-    transforming: false
-  });
-  const [currentStep, setCurrentStep] = useState(0);
-  const totalSteps = 4;
-  const [setupError, setSetupError] = useState<string | null>(null);
-  const [isSetupComplete, setIsSetupComplete] = useState(false);
-  const [isSetupInProgress, setIsSetupInProgress] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
   const terminalRef = useRef<any>(null);
-  useEffect(()=>{
-    if(forceResetup){
-      setIsSetupComplete(false);
-      setPreviewUrl("");
-      setCurrentStep(0);
-      setLoadingState({
-        installing: false,
-        starting: false,
-        ready: false,
-        mounting: false,
-        transforming: false
-      }); 
-      setIsSetupInProgress(false);
+  const [isPreviewReady, setIsPreviewReady] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [showTerminal, setShowTerminal] = useState(true);
+  const [currentUrl, setCurrentUrl] = useState<string>("");
+  const [addressBarInput, setAddressBarInput] = useState<string>("");
+  const healthCheckInterval = useRef<NodeJS.Timeout>();
+  const fileChangeDebounceRef = useRef<NodeJS.Timeout>(); // 🔥 FIX: Debounce file change refreshes
+  const healthCheckAttempts = useRef(0);
 
-    }
-  },[forceResetup]);
-
+  // Health check for server readiness
   useEffect(() => {
-    async function setupWebContainer() {
-      if (!instance || isSetupComplete || isSetupInProgress) return;
-      
+    if (!serverUrl) {
+      setIsPreviewReady(false);
+      healthCheckAttempts.current = 0;
+      setCurrentUrl("");
+      setAddressBarInput("");
+      return;
+    }
+
+    setCurrentUrl(serverUrl);
+    setAddressBarInput("");
+
+    console.log("🏥 Starting health check for:", serverUrl);
+    healthCheckAttempts.current = 0;
+    const maxAttempts = 30;
+
+    const checkHealth = async () => {
       try {
-        setIsSetupInProgress(true);
-        setSetupError(null);
+        healthCheckAttempts.current++;
         
-        try {
-          const packageJsonExists = await instance.fs.readFile("package.json", "utf8");
-          if (packageJsonExists && !forceResetup) {
-            if(terminalRef.current?.writeToTerminal){
-              terminalRef.current.writeToTerminal("package.json found, skipping setup...\n");
-            }
-            instance.on("server-ready", (port: number, url: string) => {
-               if(terminalRef.current?.writeToTerminal){
-              terminalRef.current.writeToTerminal(`🌎Reconnected to server at ${url}\r\n`);
-
-            }
-              setPreviewUrl(url);
-              setLoadingState(prev => ({ ...prev, starting: false, ready: true }));
-              setIsSetupComplete(true);
-              setIsSetupInProgress(false);
-            });
-            setCurrentStep(4);
-            setLoadingState((prev) => ({ ...prev, starting: true }));
-            return;
-          }
-        } catch (error) {
-          // Package.json doesn't exist, continue with setup
-        }
-
-        setLoadingState((prev) => ({ ...prev, transforming: true }));
-        setCurrentStep(1);
-         if(terminalRef.current?.writeToTerminal){
-              terminalRef.current.writeToTerminal("Transforming template data...\r\n");
-
-            }
-        // @ts-ignore
-        const files = transformToWebContainerFormat(templateData);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
         
-        setLoadingState((prev) => ({ ...prev, transforming: false, mounting: true }));
-        setCurrentStep(2);
-         if(terminalRef.current?.writeToTerminal){
-              terminalRef.current.writeToTerminal("Mounting files to Webcontainer...\n");
-            }
-        await instance.mount(files);
-         if(terminalRef.current?.writeToTerminal){
-              terminalRef.current.writeToTerminal("Files mounted successfully\n");
-            }
-
-        setLoadingState((prev) => ({ ...prev, mounting: false, installing: true }));
-        setCurrentStep(3);
-         if(terminalRef.current?.writeToTerminal){
-              terminalRef.current.writeToTerminal("Installing dependencies\n");
-            }
-
-        const installProcess = await instance.spawn("npm", ["install"]);
-        installProcess.output.pipeTo(new WritableStream({
-          write(data) {
-             if(terminalRef.current?.writeToTerminal){
-              terminalRef.current.writeToTerminal(data);
-            }
-          }
-        }));
-
-        const installExitCode = await installProcess.exit;
-        if (installExitCode !== 0) {
-          throw new Error("npm install failed with exit code " + installExitCode);
-        }
-         if(terminalRef.current?.writeToTerminal){
-              terminalRef.current.writeToTerminal("Dependencies installed successfully\r\n");
-            }
-        
-        setLoadingState((prev) => ({ ...prev, installing: false, starting: true }));
-        setCurrentStep(4);
-         if(terminalRef.current?.writeToTerminal){
-              terminalRef.current.writeToTerminal("Starting development server....\r\n");
-            }
-        
-        const startProcess = await instance.spawn("npm", ["run", "start"]);
-        
-        instance.on("server-ready", (port: number, url: string) => {
-           if(terminalRef.current?.writeToTerminal){
-              terminalRef.current.writeToTerminal(`Server ready at ${url}\r\n`);
-            }
-          setPreviewUrl(url);
-          setLoadingState(prev => ({ ...prev, starting: false, ready: true }));
-          setIsSetupComplete(true);
-          setIsSetupInProgress(false);
+        await fetch(serverUrl, {
+          method: "HEAD",
+          mode: "no-cors",
+          signal: controller.signal,
         });
 
-        startProcess.output.pipeTo(new WritableStream({
-          write(data) {
-             if(terminalRef.current?.writeToTerminal){
-              terminalRef.current.writeToTerminal(data);
-            }
-          }
-        }));
+        clearTimeout(timeoutId);
 
-      } catch (error) {
-        console.error("Error setting up WebContainer:", error);
-        setSetupError((error as Error).message);
-         if(terminalRef.current?.writeToTerminal){
-              terminalRef.current.writeToTerminal(`Error: ${(error as Error).message}\r\n`);
-            }
-        setIsSetupInProgress(false);
-        setLoadingState({
-          installing: false,
-          starting: false,
-          ready: false,
-          mounting: false,
-          transforming: false
-        });
-        setCurrentStep(0);
+        console.log("✅ Preview server is ready!");
+        setIsPreviewReady(true);
+        setPreviewError(null);
+        
+        if (healthCheckInterval.current) {
+          clearInterval(healthCheckInterval.current);
+          healthCheckInterval.current = undefined;
+        }
+      } catch (error: any) {
+        console.log(`⏳ Waiting for server... (${healthCheckAttempts.current}/${maxAttempts})`);
+        
+        if (healthCheckAttempts.current >= maxAttempts) {
+          console.log("⚠️ Attempting to show preview anyway...");
+          setIsPreviewReady(true);
+          setPreviewError("Server may be slow to respond");
+          
+          if (healthCheckInterval.current) {
+            clearInterval(healthCheckInterval.current);
+            healthCheckInterval.current = undefined;
+          }
+        }
       }
+    };
+
+    checkHealth();
+    healthCheckInterval.current = setInterval(checkHealth, 1000);
+
+    return () => {
+      if (healthCheckInterval.current) {
+        clearInterval(healthCheckInterval.current);
+        healthCheckInterval.current = undefined;
+      }
+    };
+  }, [serverUrl]);
+
+  // 🔥 FIX: Auto-refresh preview when files change in WebContainer
+  useEffect(() => {
+    if (!isPreviewReady || !iframeRef.current) return;
+
+    const handleFileChange = (event: CustomEvent) => {
+      console.log("📝 File changed event received, debouncing refresh...", event.detail);
+      
+      // Debounce to avoid multiple rapid refreshes
+      if (fileChangeDebounceRef.current) {
+        clearTimeout(fileChangeDebounceRef.current);
+      }
+      
+      fileChangeDebounceRef.current = setTimeout(() => {
+        console.log("🔄 Auto-refreshing preview due to file change...");
+        handleForceRefresh();
+      }, 1000); // Wait 1 second after file change to allow server to recompile
+    };
+
+    window.addEventListener("webcontainerFileChange", handleFileChange as EventListener);
+
+    return () => {
+      window.removeEventListener("webcontainerFileChange", handleFileChange as EventListener);
+      if (fileChangeDebounceRef.current) {
+        clearTimeout(fileChangeDebounceRef.current);
+      }
+    };
+  }, [isPreviewReady]);
+  
+
+  const handleForceRefresh = async () => {
+    if (!iframeRef.current) return;
+
+    console.log("🔄 Force refreshing preview...");
+    setIsRefreshing(true);
+    
+    const currentSrc = iframeRef.current.src;
+    iframeRef.current.src = "about:blank";
+    
+    setTimeout(() => {
+      if (iframeRef.current && currentSrc) {
+        iframeRef.current.src = currentSrc;
+      }
+      setIsRefreshing(false);
+    }, 100);
+  };
+
+  const handleNavigate = (path: string) => {
+    if (!serverUrl) return;
+    
+    // Remove leading ../ if present
+    let cleanPath = path.replace(/^\.\.\//, "").replace(/^\//, "");
+    
+    // Ensure path starts with /
+    if (cleanPath && !cleanPath.startsWith("/")) {
+      cleanPath = "/" + cleanPath;
     }
     
-    setupWebContainer();
-  }, [instance, templateData, isSetupComplete, isSetupInProgress, forceResetup]);
+    const newUrl = `${serverUrl}${cleanPath}`;
+    console.log("🧭 Navigating to:", newUrl);
+    
+    setCurrentUrl(newUrl);
+    setAddressBarInput(cleanPath);
+    
+    if (iframeRef.current) {
+      iframeRef.current.src = newUrl;
+    }
+  };
+
+  const handleAddressBarChange = (value: string) => {
+    setAddressBarInput(value);
+  };
+
+  const handleAddressBarSubmit = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      handleNavigate(addressBarInput);
+    }
+  };
+
+  const handleIframeLoad = () => {
+    console.log("📺 Preview iframe loaded successfully");
+    setPreviewError(null);
+  };
+
+  const handleIframeError = () => {
+    console.error("❌ Preview iframe error");
+    setPreviewError("Failed to load preview");
+  };
+
+  if (error) {
+    return (
+      <div className={cn("h-full flex items-center justify-center", className)}>
+        <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-6 rounded-lg max-w-md">
+          <div className="flex items-center gap-2 mb-3">
+            <XCircle className="h-5 w-5" />
+            <h3 className="font-semibold">Error</h3>
+          </div>
+          <p className="text-sm mb-2">{error}</p>
+          <div className="flex gap-2 mt-4">
+            {onRestartServer && (
+              <Button onClick={onRestartServer} variant="outline" size="sm">
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Restart Server
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
-      <div className="h-full flex items-center justify-center">
+      <div className={cn("h-full flex items-center justify-center", className)}>
         <div className="text-center space-y-4 max-w-md p-6 rounded-lg bg-gray-50 dark:bg-gray-900">
           <Loader2 className="h-10 w-10 animate-spin text-primary mx-auto" />
-          <h3 className="text-lg font-medium">Initializing WebContainer</h3>
+          <h3 className="text-lg font-medium">Setting Up Preview</h3>
           <p className="text-sm text-gray-500 dark:text-gray-400">
-            Setting up the environment for your project...
+            Initializing WebContainer environment...
           </p>
         </div>
       </div>
     );
   }
 
-  if (error || setupError) {
-    return (
-      <div className="h-full flex items-center justify-center">
-        <div className="bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 p-6 rounded-lg max-w-md">
-          <div className="flex items-center gap-2 mb-3">
-            <XCircle className="h-5 w-5" />
-            <h3 className="font-semibold">Error</h3>
-          </div>
-          <p className="text-sm">{error || setupError}</p>
-        </div>
-      </div>
-    );
-  }
-
-  const getStepText = (stepIndex: number, label: string) => {
-    const isActive = stepIndex === currentStep;
-    const isComplete = stepIndex < currentStep;
-    
-    return (
-      <span className={`text-sm font-medium ${
-        isComplete ? 'text-green-600 dark:text-green-400' : 
-        isActive ? 'text-blue-600 dark:text-blue-400' : 
-        'text-gray-500 dark:text-gray-400'
-      }`}>
-        {label}
-      </span>
-    );
-  };
-
-  const getStepIcon = (stepIndex: number) => {
-    if (stepIndex < currentStep) {
-      return <CheckCircle className="h-5 w-5 text-green-500" />;
-    } else if (stepIndex === currentStep) {
-      return <Loader2 className="h-5 w-5 animate-spin text-blue-500" />;
-    } else {
-      return <div className="h-5 w-5 rounded-full border-2 border-gray-300 dark:border-gray-600" />;
-    }
-  };
-
   return (
-    <div className="h-full w-full flex flex-col">
-      {!previewUrl ? (
-        <div className="h-full flex flex-col">
-          <div className="w-full max-w-md p-6 m-5 rounded-lg bg-white dark:bg-zinc-800 shadow-sm mx-auto">
-            <Progress
-              value={(currentStep / totalSteps) * 100}
-              className="h-2 mb-6"
-            />
+    <div className={cn("h-full flex flex-col bg-background", className)}>
+      {/* Preview Header with Navigation */}
+      <div className="flex flex-col border-b bg-muted/30">
+        {/* Top Bar with Controls */}
+        <div className="flex items-center justify-between px-4 py-2 border-b">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-medium">Preview</span>
+            
+            {serverUrl && (
+              <div className="flex items-center gap-2">
+                {isPreviewReady ? (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                    <span className="text-xs text-muted-foreground">Live</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" />
+                    <span className="text-xs text-muted-foreground">
+                      Connecting... ({healthCheckAttempts.current}/30)
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
-            <div className="space-y-4 mb-6">
-              <div className="flex items-center gap-3">
-                {getStepIcon(1)}
-                {getStepText(1, "Transforming template data")}
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowTerminal(!showTerminal)}
+              className="h-7 text-xs"
+            >
+              <TerminalIcon className="h-3 w-3 mr-1" />
+              {showTerminal ? "Hide" : "Show"} Terminal
+            </Button>
+            
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleForceRefresh}
+              disabled={!serverUrl || isRefreshing}
+              className="h-7"
+              title="Force refresh preview"
+            >
+              <RefreshCw className={cn("h-3 w-3", isRefreshing && "animate-spin")} />
+            </Button>
+            
+            {onRestartServer && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onRestartServer}
+                className="h-7 text-xs"
+              >
+                Restart Server
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Address Bar */}
+        {serverUrl && isPreviewReady && (
+          <div className="flex items-center gap-2 px-4 py-2 bg-background/50">
+            <Globe className="h-4 w-4 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder="Enter route: /dashboard, /settings, etc."
+              value={addressBarInput}
+              onChange={(e) => handleAddressBarChange(e.target.value)}
+              onKeyDown={handleAddressBarSubmit}
+              className="flex-1 h-7 text-xs px-3"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleNavigate(addressBarInput)}
+              className="h-7 px-3 text-xs"
+            >
+              Go
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Main Content Area */}
+      {serverUrl && isPreviewReady ? (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {/* 🔥 FIX #3: Iframe with transparent background for adaptability */}
+          <div className={cn("bg-transparent", showTerminal ? "flex-1" : "h-full")}>
+            {previewError ? (
+              <div className="h-full flex items-center justify-center bg-yellow-50 dark:bg-yellow-900/10">
+                <div className="text-center space-y-3 p-6">
+                  <XCircle className="h-10 w-10 text-yellow-600 dark:text-yellow-400 mx-auto" />
+                  <div>
+                    <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                      {previewError}
+                    </p>
+                    <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+                      The preview may still work - trying to load anyway
+                    </p>
+                  </div>
+                  <Button onClick={handleForceRefresh} size="sm" variant="outline">
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Retry
+                  </Button>
+                </div>
               </div>
-              <div className="flex items-center gap-3">
-                {getStepIcon(2)}
-                {getStepText(2, "Mounting files")}
-              </div>
-              <div className="flex items-center gap-3">
-                {getStepIcon(3)}
-                {getStepText(3, "Installing dependencies")}
-              </div>
-              <div className="flex items-center gap-3">
-                {getStepIcon(4)}
-                {getStepText(4, "Starting development server")}
-              </div>
-            </div>
+            ) : (
+              <iframe
+                ref={iframeRef}
+                src={currentUrl}
+                className="w-full h-full border-none"
+                title="WebContainer Preview"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox"
+                onLoad={handleIframeLoad}
+                onError={handleIframeError}
+                allow="cross-origin-isolated"
+                style={{
+                  backgroundColor: 'inherit',
+                  colorScheme: 'normal'
+                }}
+              />
+            )}
           </div>
 
           {/* Terminal */}
-          <div className="flex-1 p-4">
-            <TerminalComponent 
-              ref={terminalRef}
-              webContainerInstance={instance}
-              theme="dark"
-              className="h-full"
-            />
-          </div>
+          {showTerminal && (
+            <div className="h-64 border-t">
+              <TerminalComponent
+                ref={terminalRef}
+                webContainerInstance={instance}
+                theme="dark"
+                className="h-full"
+              />
+            </div>
+          )}
         </div>
       ) : (
-        <div className="h-full flex flex-col">
-          {/* Preview */}
-          <div className="flex-1">
-            <iframe
-              src={previewUrl}
-              className="w-full h-full border-none"
-              title="WebContainer Preview"
-            />
+        <div className="flex-1 flex flex-col">
+          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-muted/30">
+            <div className="text-center space-y-4 mb-8">
+              <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
+              <div>
+                <h3 className="text-lg font-semibold">
+                  {serverUrl ? "Waiting for server..." : "Starting development server..."}
+                </h3>
+                <p className="text-sm text-muted-foreground mt-2">
+                  {serverUrl 
+                    ? `Health checking ${serverUrl.split("//")[1]?.split(".")[0] || "server"}...`
+                    : "This may take a few moments"
+                  }
+                </p>
+              </div>
+              
+              {serverUrl && (
+                <div className="flex flex-col items-center gap-2 mt-4">
+                  <code className="text-xs bg-muted px-3 py-1 rounded">
+                    {serverUrl}
+                  </code>
+                  <Button
+                    onClick={handleForceRefresh}
+                    size="sm"
+                    variant="outline"
+                    className="mt-2"
+                  >
+                    Try Loading Anyway
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
-          
-          {/* Terminal at bottom when preview is ready */}
+
           <div className="h-64 border-t">
-            <TerminalComponent 
+            <TerminalComponent
               ref={terminalRef}
               webContainerInstance={instance}
               theme="dark"
