@@ -16,6 +16,7 @@ interface PlaygroundEditorProps {
     onAcceptSuggestion:(editor:any,monaco:any) =>void
     onRejectSuggestion:(editor:any)=>void
     onTriggerSuggestion:(type:string,editor:any)=>void
+    serverUrl?: string | null
 }
 
 // CHANGE 1: Component name capitalized (React convention)
@@ -29,7 +30,8 @@ const PlaygroundEditor = ({
   suggestionPosition,
   onAcceptSuggestion,
   onRejectSuggestion,
-  onTriggerSuggestion
+  onTriggerSuggestion,
+  serverUrl
 }:PlaygroundEditorProps) =>{
 const editorRef = useRef<any>(null);
 const monacoRef = useRef<Monaco|null>(null);
@@ -338,6 +340,79 @@ const handleEditorDidMount = (editor:any,monaco:Monaco)=>{
 
     })
     configureMonaco(monaco)
+    
+    // Register custom link provider for localhost URLs
+    const linkProviderDisposable = monaco.languages.registerLinkProvider("javascript", {
+      provideLinks: (model: any) => {
+        const links: any[] = [];
+        const text = model.getValue();
+        
+        // Match localhost URLs and WebContainer URLs
+        const urlPattern = /(https?:\/\/(?:localhost|127\.0\.0\.1|[\w\-]+\.webcontainer-api\.io)(?::\d+)?(?:\/[^\s"'<>]*)?)/g;
+        const matches = text.matchAll(urlPattern);
+        
+        for (const match of matches) {
+          const url = match[0];
+          const startIndex = match.index || 0;
+          
+          // Find line and column
+          const textBeforeMatch = text.substring(0, startIndex);
+          const lineNumber = textBeforeMatch.split("\n").length;
+          const column = startIndex - textBeforeMatch.lastIndexOf("\n");
+          
+          links.push({
+            range: new monaco.Range(lineNumber, column, lineNumber, column + url.length),
+            url: url,
+            tooltip: `Click to open: ${url}`
+          });
+        }
+        
+        return { links };
+      },
+      resolveLink: (link: any) => {
+        return {
+          url: link.url,
+          tooltip: `Click to open: ${link.url}`
+        };
+      }
+    });
+    
+    // Also register for other common languages
+    ["typescript", "html", "json", "python", "java", "cpp", "c", "csharp", "php", "ruby", "go", "rust"].forEach(lang => {
+      monaco.languages.registerLinkProvider(lang, {
+        provideLinks: (model: any) => {
+          const links: any[] = [];
+          const text = model.getValue();
+          
+          const urlPattern = /(https?:\/\/(?:localhost|127\.0\.0\.1|[\w\-]+\.webcontainer-api\.io)(?::\d+)?(?:\/[^\s"'<>]*)?)/g;
+          const matches = text.matchAll(urlPattern);
+          
+          for (const match of matches) {
+            const url = match[0];
+            const startIndex = match.index || 0;
+            
+            const textBeforeMatch = text.substring(0, startIndex);
+            const lineNumber = textBeforeMatch.split("\n").length;
+            const column = startIndex - textBeforeMatch.lastIndexOf("\n");
+            
+            links.push({
+              range: new monaco.Range(lineNumber, column, lineNumber, column + url.length),
+              url: url,
+              tooltip: `Click to open: ${url}`
+            });
+          }
+          
+          return { links };
+        },
+        resolveLink: (link: any) => {
+          return {
+            url: link.url,
+            tooltip: `Click to open: ${link.url}`
+          };
+        }
+      });
+    });
+    
     editor.addCommand(monaco.KeyMod.CtrlCmd| monaco.KeyCode.Space,()=>{
       console.log("Ctrl+Space pressed, triggering suggestions")
       onTriggerSuggestion("completion",editor)

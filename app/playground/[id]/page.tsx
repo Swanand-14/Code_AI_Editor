@@ -2,10 +2,12 @@
 
 import React, { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
-import { Save, Bot, Settings, FileText, X, AlertCircle } from "lucide-react";
+import { Save, Bot, Settings, FileText, X, AlertCircle, ExternalLink } from "lucide-react";
 
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
+import { fileSyncService } from "@/modules/playground/services/file-sync-service";
+import { webContainerService } from "@/modules/webContainers/services/webContainer-services";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -49,6 +51,7 @@ function MainPlaygroundPage() {
   const { id } = useParams<{ id: string }>();
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
   const [createRepoDialogOpen, setCreateRepoDialogOpen] = useState(false);
+  const [manualServerUrl, setManualServerUrl] = useState<string | null>(null);
   const router = useRouter();
 
   const { playgroundData, templateData, isLoading, error, saveTemplateData } =
@@ -74,28 +77,133 @@ function MainPlaygroundPage() {
   } = useFileExplorer();
 
   const {
-    severUrl,
+    serverUrl,
     isLoading: webContainerLoading,
     error: webContainerError,
     instance: webContainerInstance,
     writeFileSync,
-    destroy,
-  } = useWebContainer({ templateData });
+    restartServer
+  } = useWebContainer({ templateData,projectId:id });
 
   const lastSyncedContent = useRef<Map<string, string>>(new Map());
 
   useEffect(() => {
     setPlaygroundId(id);
-  }, [id, setPlaygroundId]);
+    closeAllFiles();
+    setActiveFileId(null)
+  }, [id, setPlaygroundId,closeAllFiles,setActiveFileId]);
+
+  useEffect(() => {
+  if (id) {
+    console.log("📌 Current playground ID:", id);
+    webContainerService.setCurrentProject(id);
+  }
+}, [id]);
+
+useEffect(() => {
+  if (templateData) {
+    console.log("📦 Template data loaded for project:", id);
+  }
+}, [templateData, id]);
+
+  const requiresServerRestart = (filename:string,extension:string):boolean=>{
+   const fullName = `${filename}.${extension}`;
+   const restartFiles = ["package.json","tsconfig.json","webpack.config.js","next.config.js","vite.config.js",".env",".env.local"];
+    return restartFiles.includes(fullName);
+  }
 
 
-  
+
+  useEffect(() => {
+  // Wait 5 seconds after WebContainer instance is available
+  if (webContainerInstance && !serverUrl && !manualServerUrl) {
+    console.log("⚠️ No serverUrl detected, trying manual URL...");
+    
+    setTimeout(() => {
+      // Try to get URL from service
+      const url = webContainerService.getServerUrl();
+      console.log("🔍 Manual check - service URL:", url);
+      
+      if (url) {
+        setManualServerUrl(url);
+        console.log("✅ Using manual URL:", url);
+      } else {
+        console.log("❌ Still no URL from service");
+      }
+    }, 5000);
+  }
+}, [webContainerInstance, serverUrl, manualServerUrl]);
 
   useEffect(() => {
     if (templateData && !openFiles.length) {
       setTemplateData(templateData);
     }
   }, [templateData, setTemplateData, openFiles.length]);
+
+  useEffect(()=>{
+    const handleFileChanged = (event:CustomEvent) =>{
+      const {path,content} = event.detail
+      console.log(`Terminal updated file:${path}`);
+      if(!templateData)return;
+      const fileName = path.split('/').pop()
+      const activelyEditedFile = openFiles.find(
+        (f)=>`${f.filename}.${f.fileExtension}` === fileName && f.hasUnsavedChanges
+      );
+      if(activelyEditedFile){
+        console.log(`Skipping sync - file ${fileName} has unsaved changes`)
+        toast.info(`${fileName} has unsaved changes .Save to sync with terminal`)
+        return;
+      }
+      const updatedTemplateData = JSON.parse(JSON.stringify(templateData));
+    
+    const updateFileInTree = (items: any[]): any[] => {
+      return items.map((item) => {
+        if ("folderName" in item) {
+          return {
+            ...item,
+            items: updateFileInTree(item.items)
+          };
+        } else {
+          const itemPath = `${item.filename}.${item.fileExtension}`;
+          if (path.endsWith(itemPath)) {
+            console.log(`✅ Updated ${itemPath} from terminal`);
+            return { ...item, content };
+          }
+          return item;
+        }
+      });
+    };
+
+        updatedTemplateData.items = updateFileInTree(updatedTemplateData.items);
+    setTemplateData(updatedTemplateData);
+    
+    // Update open files (only if not being edited)
+    const updatedOpenFiles = openFiles.map((file) => {
+      const filePath = `${file.filename}.${file.fileExtension}`;
+      if (path.endsWith(filePath) && !file.hasUnsavedChanges) {
+        return {
+          ...file,
+          content,
+          originalContent: content,
+          hasUnsavedChanges: false
+        };
+      }
+      return file;
+    });
+    
+    setOpenFiles(updatedOpenFiles);
+    
+    toast.success(`Synced ${path.split('/').pop()} from terminal`);
+  };
+
+  window.addEventListener('packageJsonUpdated', handleFileChanged as EventListener);
+  
+  return () => {
+    window.removeEventListener('packageJsonUpdated', handleFileChanged as EventListener);
+  };
+
+    
+  },[templateData, openFiles, setTemplateData, setOpenFiles])
 
   const handleCreateRepo = async (data: RepoCreationData) => {
     if(!templateData){
@@ -210,71 +318,87 @@ function MainPlaygroundPage() {
   const handleSave = useCallback(
     async (fileId?: string) => {
       const targetFile = fileId || activeFileId;
-      if (!targetFile) return;
+      if (!targetFile) {
+        toast.error("No active file to save");
+        return;
+
+      }
+
 
       const fileToSave = openFiles.find((file) => file.id === targetFile);
-      if (!fileToSave || !fileToSave.hasUnsavedChanges) return;
+      if (!fileToSave || !fileToSave.hasUnsavedChanges){
+        toast.info("No changes to save");
+        return;
+      }
 
       const latestTemplateData = useFileExplorer.getState().templateData;
-      if (!latestTemplateData) return;
+      if (!latestTemplateData){
+        toast.error("No template data available");
+        return;
+      }
 
       try {
-        const filePath = findFilePath(fileToSave, latestTemplateData);
-        if (!filePath) {
-          toast.error("File path not found");
-          return;
+        
+        const filepath = findFilePath(fileToSave,latestTemplateData);
+        if(!filepath){
+          throw new Error("File Path not found");
+
         }
 
-        const updatedTemplateData = JSON.parse(
-          JSON.stringify(latestTemplateData)
-        );
-
-        const updateFileContentRecursive = (items: any[]) =>
-          items.map((item) => {
-            if ("folderName" in item) {
-              return {
-                ...item,
-                items: updateFileContentRecursive(item.items),
-              };
-            } else if (
-              item.filename === fileToSave.filename &&
-              item.fileExtension === fileToSave.fileExtension
-            ) {
-              return { ...item, content: fileToSave.content };
+        await fileSyncService.syncFileImmediate(filepath,fileToSave.content)
+        const needsRestart = requiresServerRestart(fileToSave.filename,fileToSave.fileExtension)
+        if(needsRestart && webContainerService.isServerRunning()){
+          toast.loading("Restarting dev server .... ",{id:`save-${targetFile}`});
+          await webContainerService.restartDevServer()
+        }
+        const updatedTemplateData = JSON.parse(JSON.stringify(latestTemplateData));
+        const updateFileContentRecursive = (items:any[], parentPath:string = ""):any[]=>items.map((item)=>{
+          if("folderName" in item){
+            const currentPath = parentPath ? `${parentPath}/${item.folderName}` : item.folderName;
+            return {
+              ...item,items:updateFileContentRecursive(item.items, currentPath)
+            }
+          }else{
+            const currentPath = parentPath ? `${parentPath}/${item.filename}.${item.fileExtension}` : `${item.filename}.${item.fileExtension}`;
+            const filePath = fileToSave.path 
+              ? `${fileToSave.path}/${fileToSave.filename}.${fileToSave.fileExtension}`
+              : `${fileToSave.filename}.${fileToSave.fileExtension}`;
+            
+            // ✅ FIX: Compare both filename and full path
+            if(currentPath === filePath){
+              return {...item,content:fileToSave.content}
             }
             return item;
-          });
-
-        if (writeFileSync) {
-          await writeFileSync(filePath, fileToSave.content);
-          lastSyncedContent.current.set(fileToSave.id, fileToSave.content);
-
-          if (webContainerInstance && webContainerInstance.fs) {
-            await webContainerInstance.fs.writeFile(
-              filePath,
-              fileToSave.content
-            );
           }
+        });
+
+        updatedTemplateData.items = updateFileContentRecursive(updatedTemplateData.items)
+        const newTemplateData = await saveTemplateData(updatedTemplateData);
+        if(!newTemplateData){
+          throw new Error("Failed to save to Database")
         }
 
-        const newTemplateData = await saveTemplateData(updatedTemplateData);
-        setTemplateData(newTemplateData || updatedTemplateData);
-
+        setTemplateData(newTemplateData);
         const updatedOpenFiles = openFiles.map((f) =>
-          f.id === targetFile
-            ? {
-                ...f,
-                content: fileToSave.content,
-                originalContent: fileToSave.content,
-                hasUnsavedChanges: false,
-              }
-            : f
-        );
-        setOpenFiles(updatedOpenFiles);
+        f.id === targetFile
+          ? {
+              ...f,
+              content: fileToSave.content,
+              originalContent: fileToSave.content,
+              hasUnsavedChanges: false,
+            }
+          : f
+      );
+      setOpenFiles(updatedOpenFiles);
 
-        toast.success(
-          `Saved ${fileToSave.filename}.${fileToSave.fileExtension}`
-        );
+      toast.success(
+        `Saved ${fileToSave.filename}.${fileToSave.fileExtension}`,
+        { id: `save-${targetFile}` }
+      );
+
+
+
+
       } catch (error) {
         toast.error("Failed to save file");
         console.error("Save error:", error);
@@ -284,8 +408,8 @@ function MainPlaygroundPage() {
       activeFileId,
       openFiles,
       saveTemplateData,
-      writeFileSync,
-      webContainerInstance,
+      
+      
       setTemplateData,
       setOpenFiles,
     ]
@@ -320,14 +444,91 @@ function MainPlaygroundPage() {
 
   const handleAIAssistant = () => {};
 
+  const handleOpenPreviewInNewTab = () => {
+    if (serverUrl || manualServerUrl) {
+      const previewUrl = serverUrl || manualServerUrl;
+      const encodedUrl = encodeURIComponent(previewUrl);
+      const apiUrl = `/api/webcontainer/${id}?url=${encodedUrl}`;
+      window.open(apiUrl, "_blank");
+    } else {
+      toast.error("Preview server is not ready yet");
+    }
+  };
+
   const handleContentChange = useCallback(
-    (value: string) => {
-      if (activeFile) {
-        updateFileContent(activeFile.id, value);
-      }
-    },
-    [activeFile, updateFileContent]
-  );
+  (value: string) => {
+    console.log("🔄 handleContentChange called with value length:", value.length);
+    
+    if (!activeFile) {
+      console.warn("⚠️ No active file set");
+      return;
+    }
+
+    console.log("📄 Active file:", {
+      filename: activeFile.filename,
+      extension: activeFile.fileExtension,
+      path: activeFile.path,
+      id: activeFile.id
+    });
+
+    // Update UI immediately
+    updateFileContent(activeFile.id, value);
+    console.log("✏️ Updated UI for file", activeFile.id);
+
+    // Get template data from Zustand store
+    const templateData = useFileExplorer.getState().templateData;
+    if (!templateData) {
+      console.warn("❌ No template data available for file sync");
+      return;
+    }
+
+    // Find the correct file path using the file object which includes path property
+    const filePath = findFilePath(activeFile, templateData);
+    console.log("🔍 File path resolution:", {
+      resolved: filePath,
+      fileName: activeFile.filename,
+      fileExt: activeFile.fileExtension,
+      filePath: activeFile.path
+    });
+
+    if (!filePath) {
+      console.warn(`❌ Could not find file path for ${activeFile.filename}.${activeFile.fileExtension}`);
+      return;
+    }
+
+    console.log(`📝 Starting sync for: ${filePath}`);
+    
+    // Queue for debounced writes to persist to database
+    fileSyncService.queueFileChange(filePath, value);
+    console.log(`⏳ Queued ${filePath} for debounced database sync (500ms)`);
+    console.log("📄 Active file:", {
+  filename: activeFile.filename,
+  extension: activeFile.fileExtension,
+  path: activeFile.path,  // ← What does this show?
+  id: activeFile.id
+});
+    
+    // Also write immediately to WebContainer for hot reload support
+    if (webContainerInstance) {
+      console.log(`🚀 Writing ${filePath} IMMEDIATELY to WebContainer for hot reload`);
+      writeFileSync?.(filePath, value)
+        .then(() => {
+          console.log(`✅ Successfully wrote ${filePath} to WebContainer`);
+          // 🔥 FIX: Emit a custom event to trigger preview refresh
+          window.dispatchEvent(new CustomEvent("webcontainerFileChange", {
+            detail: { filePath, content: value }
+          }));
+          console.log(`📡 Dispatched file change event for preview refresh`);
+        })
+        .catch((error) => {
+          console.error(`❌ Failed to sync ${filePath} immediately:`, error);
+        });
+    } else {
+      console.warn(`⚠️ WebContainer instance not available yet (hot reload disabled)`);
+    }
+  },
+  [activeFile, updateFileContent, webContainerInstance, writeFileSync]
+);
 
   if (error) {
     return (
@@ -450,7 +651,7 @@ function MainPlaygroundPage() {
                   <TooltipContent>Save All (Ctrl+Shift+S)</TooltipContent>
                 </Tooltip>
 
-                <Tooltip>
+                {/* <Tooltip>
                   <TooltipTrigger asChild>
                     <ToggleAI isEnabled={AiSuggestions.isEnabled}
                     onToggle={AiSuggestions.toggleEnabled}
@@ -458,6 +659,35 @@ function MainPlaygroundPage() {
                     />
                   </TooltipTrigger>
                   <TooltipContent>AI Assistant</TooltipContent>
+                </Tooltip> */}
+
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant={isPreviewVisible ? "default" : "outline"}
+                      onClick={() => setIsPreviewVisible(!isPreviewVisible)}
+                      aria-label="Toggle preview"
+                    >
+                      {isPreviewVisible ? "Hide" : "Show"} Preview
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{isPreviewVisible ? "Hide" : "Show"} Preview Panel</TooltipContent>
+                </Tooltip>
+
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleOpenPreviewInNewTab}
+                      disabled={!serverUrl && !manualServerUrl}
+                      aria-label="Open preview in new tab"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Open Preview in New Tab</TooltipContent>
                 </Tooltip>
 
                 <DropdownMenu>
@@ -467,12 +697,6 @@ function MainPlaygroundPage() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem
-                      onClick={() => setIsPreviewVisible(!isPreviewVisible)}
-                    >
-                      {isPreviewVisible ? "Hide" : "Show"} Preview
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={closeAllFiles}>
                       Close All Files
                     </DropdownMenuItem>
@@ -493,7 +717,19 @@ function MainPlaygroundPage() {
             <div className="border-b border-border bg-muted/30">
               <div className="flex items-center justify-between px-4 py-2">
                 <div className="flex items-center gap-1 overflow-x-auto">
-                  {openFiles.map((file) => (
+                  {openFiles.map((file) => {
+                    // 🔥 FIX: Show full path if there are duplicate filenames
+                    const isDuplicate = openFiles.some(
+                      (f) =>
+                        f.filename === file.filename &&
+                        f.fileExtension === file.fileExtension &&
+                        f.id !== file.id
+                    );
+                    const displayName = isDuplicate && file.path
+                      ? `${file.path}/${file.filename}.${file.fileExtension}`
+                      : `${file.filename}.${file.fileExtension}`;
+
+                    return (
                     <div
                       key={file.id}
                       onClick={() => setActiveFileId(file.id)}
@@ -504,8 +740,8 @@ function MainPlaygroundPage() {
                       }`}
                     >
                       <FileText className="h-3 w-3" />
-                      <span className="text-sm">
-                        {file.filename}.{file.fileExtension}
+                      <span className="text-sm" title={displayName}>
+                        {displayName}
                       </span>
                       {file.hasUnsavedChanges && (
                         <span className="h-2 w-2 rounded-full bg-orange-500" />
@@ -520,7 +756,8 @@ function MainPlaygroundPage() {
                         <X className="h-3 w-3" />
                       </button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 {openFiles.length > 1 && (
                   <Button
@@ -545,14 +782,15 @@ function MainPlaygroundPage() {
                     <PlaygroundEditor
                       activeFile={activeFile}
                       content={activeFile?.content || ""}
-                      onContentChange={(value)=>activeFileId&&updateFileContent(activeFileId, value)}
+                      //onContentChange={(value)=>activeFileId&&updateFileContent(activeFileId, value)}
+                      onContentChange={handleContentChange}
                       suggestions={AiSuggestions.suggestions}
                       suggestionLoading = {AiSuggestions.isLoading}
                       suggestionPosition = {AiSuggestions.position}
                       onAcceptSuggestion = {(editor,monaco)=>AiSuggestions.acceptSuggestion(editor,monaco)}
                       onRejectSuggestion = {(editor)=>AiSuggestions.rejectSuggestion(editor)}
                       onTriggerSuggestion = {(type,editor)=>AiSuggestions.fetchSuggestion(type,editor)}
-
+                      serverUrl={serverUrl || manualServerUrl}
                     />
                   </div>
                 </ResizablePanel>
@@ -563,7 +801,7 @@ function MainPlaygroundPage() {
                     <ResizablePanel defaultSize={50}>
                       <WebContainerPreview
                         templateData={templateData}
-                        serverUrl={severUrl || ""}
+                        serverUrl={serverUrl || manualServerUrl}
                         isLoading={webContainerLoading}
                         error={webContainerError}
                         instance={webContainerInstance}

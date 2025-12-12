@@ -1,97 +1,197 @@
-import { useState,useEffect,useCallback } from "react";
-import { WebContainer } from "@webcontainer/api";
-
+import { useState, useEffect, useCallback, useRef } from "react";
+import { webContainerService } from "../services/webContainer-services";
 import { TemplateFolder } from "@/modules/playground/lib/path-to-json";
-import { TruckElectric } from "lucide-react";
+import { transformToWebContainerFormat } from "./transformer";
 
-interface UseWebContainerProps{
-    templateData:TemplateFolder
+interface UseWebContainerProps {
+  templateData: TemplateFolder | null;
+  autoStart?: boolean;
+  projectId?: string; // 🔥 FIX #2: Add explicit project ID
 }
 
-interface UseWebContainerReturn{
-    severUrl:string|null;
-    isLoading:boolean;
-    error:string|null;
-    instance:WebContainer|null;
-    writeFileSync:(path:string,content:string)=>Promise<void>;
-    destroy:()=>void;
+interface UseWebContainerReturn {
+  serverUrl: string | null;
+  isLoading: boolean;
+  error: string | null;
+  instance: any | null;
+  isServerRunning: boolean;
+  writeFileSync: (path: string, content: string) => Promise<void>;
+  startServer: () => Promise<void>;
+  restartServer: () => Promise<void>;
+  stopServer: () => void;
 }
 
-export const useWebContainer = ({templateData}:UseWebContainerProps):UseWebContainerReturn=>{
-    const [serverUrl,setServerUrl] = useState<string|null>(null);
-    const [isLoading,setIsloading] = useState<boolean>(true);
-    const [error,setError] = useState<string|null>(null);
-    const [instance,setInstance] = useState<WebContainer|null>(null);
-    useEffect(()=>{
-        let mounted = true;
-        async function initializeWebcontainer(){
-            try {
-                const webContainerInstance = await WebContainer.boot();
-                if(!mounted){
-                    return;
-                }
-                setInstance(webContainerInstance);
-                setIsloading(false);
-            } catch (error) {
-                console.error('Failed to initialize WebCnntainer:',error);
-                if(mounted){
-                    setError(error instanceof Error?error.message:'Failed to initialize Webcontainer');
-                    setIsloading(false);
-                }
-            }
+export const useWebContainer = ({
+  templateData,
+  autoStart = true,
+  projectId, // 🔥 FIX #2: Use this to track projects
+}: UseWebContainerProps): UseWebContainerReturn => {
+  const [serverUrl, setServerUrl] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [instance, setInstance] = useState<any | null>(null);
+  const [isServerRunning, setIsServerRunning] = useState(false);
+  
+  const hasInitialized = useRef(false);
+  const currentProjectRef = useRef<string | null>(null);
+
+  // Initialize WebContainer instance (once)
+  useEffect(() => {
+    let mounted = true;
+
+    async function initialize() {
+      try {
+        const wc = await webContainerService.getInstance();
+        if (mounted) {
+          setInstance(wc);
+          setIsLoading(false);
         }
-
-        initializeWebcontainer();
-        return ()=>{
-            mounted=false;
-            if(instance){
-                instance.teardown();
-            }
-
+      } catch (err) {
+        console.error("Failed to initialize WebContainer:", err);
+        if (mounted) {
+          setError(err instanceof Error ? err.message : "Failed to initialize");
+          setIsLoading(false);
         }
-
-    },[])
-
-    const writeFileSync = useCallback(async(path:string,content:string):Promise<void>=>{
-       if(!instance){
-        throw new Error('WebContainer instance is not available')
-
-       }
-       try {
-        const pathParts = path.split("/")
-        const folderPath = pathParts.slice(0,-1).join("/");
-        if(folderPath){
-            await instance.fs.mkdir(folderPath,{recursive:true});
-
-        }
-        await instance.fs.writeFile(path,content);
-
-
-       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message:'Failed to write file'
-        console.error(`Failed to write file at ${path}:`,err);
-        throw new Error(`Failed to write file at ${path}:${errorMessage}`)
-        
-       }
-    },[instance])
-
-    const destroy = useCallback(()=>{
-        if(instance){
-            instance.teardown();
-            setInstance(null);
-            setServerUrl(null);
-        }
-    },[instance])
-
-    return {
-        severUrl:serverUrl,
-        isLoading,
-        error,
-        instance,
-        writeFileSync,
-        destroy 
+      }
     }
 
+    initialize();
 
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
-}
+  // 🔥 FIX #2: Setup server listener (once only)
+  useEffect(() => {
+    const handleServerReady = ({ url }: { port: number; url: string }) => {
+      console.log("🎯 Server ready:", url);
+      setServerUrl(url);
+      setIsServerRunning(true);
+    };
+
+    webContainerService.on("server-ready", handleServerReady);
+
+    return () => {
+      webContainerService.off("server-ready", handleServerReady);
+    };
+  }, []);
+
+  // 🔥 FIX #2: Handle project switching and mounting
+  useEffect(() => {
+    if (!instance || !templateData || !projectId) return;
+
+    async function setupProject() {
+      try {
+        // Check if we're switching projects
+        if (currentProjectRef.current !== projectId) {
+          console.log(`🔄 Project switch detected: ${currentProjectRef.current} → ${projectId}`);
+          
+          setIsLoading(true);
+          setServerUrl(null);
+          setIsServerRunning(false);
+          
+          // Clear previous project completely
+          await webContainerService.setCurrentProject(projectId);
+          
+          // Reset state
+          hasInitialized.current = false;
+          currentProjectRef.current = projectId;
+        }
+
+        // Skip if already initialized for this project
+        if (hasInitialized.current && currentProjectRef.current === projectId) {
+          console.log("✅ Project already initialized, skipping");
+          return;
+        }
+
+        console.log(`📁 Mounting project: ${projectId}`);
+        hasInitialized.current = true;
+
+        // Mount files
+        const files = transformToWebContainerFormat(templateData);
+        await instance.mount(files);
+        console.log("✅ Files mounted");
+
+        // Install dependencies
+        console.log("📦 Installing dependencies...");
+        const exitCode = await webContainerService.installDependencies();
+        
+        if (exitCode !== 0) {
+          throw new Error(`npm install failed with code ${exitCode}`);
+        }
+        console.log("✅ Dependencies installed");
+
+        // Auto-start server
+        if (autoStart) {
+          console.log("🚀 Auto-starting server...");
+          await startServer();
+        }
+
+        setIsLoading(false);
+      } catch (err) {
+        console.error("❌ Setup error:", err);
+        setError(err instanceof Error ? err.message : "Setup failed");
+        setIsLoading(false);
+        hasInitialized.current = false;
+      }
+    }
+
+    setupProject();
+  }, [instance, templateData, projectId, autoStart]);
+
+  const writeFileSync = useCallback(
+    async (path: string, content: string): Promise<void> => {
+      await webContainerService.writeFile(path, content);
+    },
+    []
+  );
+
+  const startServer = useCallback(async () => {
+    if (webContainerService.isServerRunning()) {
+      console.log("⚠️ Server already running");
+      return;
+    }
+
+    try {
+      console.log("🎬 Starting dev server...");
+      // 🔥 FIX #1: Auto-detect script (no args needed)
+      await webContainerService.startDevServer();
+      setIsServerRunning(true);
+    } catch (err) {
+      console.error("Failed to start server:", err);
+      setError(err instanceof Error ? err.message : "Failed to start server");
+    }
+  }, []);
+
+  const restartServer = useCallback(async () => {
+    try {
+      console.log("🔄 Restarting server...");
+      setIsServerRunning(false);
+      setServerUrl(null);
+      await webContainerService.restartDevServer();
+    } catch (err) {
+      console.error("Failed to restart server:", err);
+      setError(err instanceof Error ? err.message : "Failed to restart server");
+    }
+  }, []);
+
+  const stopServer = useCallback(() => {
+    console.log("🛑 Stopping server...");
+    webContainerService.stopDevServer();
+    setIsServerRunning(false);
+    setServerUrl(null);
+  }, []);
+
+  return {
+    serverUrl,
+    isLoading,
+    error,
+    instance,
+    isServerRunning,
+    writeFileSync,
+    startServer,
+    restartServer,
+    stopServer,
+  };
+};

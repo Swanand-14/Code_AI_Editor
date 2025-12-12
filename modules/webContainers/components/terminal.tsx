@@ -180,6 +180,21 @@ const TerminalComponent = forwardRef<TerminalRef, TerminalProps>(({
       const exitCode = await process.exit;
       currentProcess.current = null;
 
+      if(cmd === 'npm' && exitCode === 0){
+        try {
+          const updatedPackageJson = await webContainerInstance.fs.readFile('package.json','utf-8');
+          window.dispatchEvent(new CustomEvent('packageJsonUpdated',{
+            detail:{path:'package.json',content:updatedPackageJson}
+          }));
+          term.current.writeln('\r\n package.json updated');
+
+        } catch (error) {
+         console.warn('Could not read updated package.json:',error) 
+        }
+      }
+
+
+
       // Show new prompt
       writePrompt();
 

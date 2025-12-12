@@ -260,10 +260,14 @@ function TemplateNode({
     const file = item as TemplateFile;
     const fileName = `${file.filename}.${file.fileExtension}`;
 
+    // 🔥 FIX: Properly compare paths - use file.path if available (from scanning)
+    // otherwise build it from the component's path parameter
+    const fileFullPath = file.path !== undefined && file.path !== null ? file.path : path;
     const isSelected =
       selectedFile &&
       selectedFile.filename === file.filename &&
-      selectedFile.fileExtension === file.fileExtension;
+      selectedFile.fileExtension === file.fileExtension &&
+      selectedFile.path === fileFullPath;
 
     const handleRename = () => {
       setIsRenameDialogOpen(true);
@@ -288,7 +292,13 @@ function TemplateNode({
         <div className="flex items-center group">
           <SidebarMenuButton
             isActive={isSelected}
-            onClick={() => onFileSelect?.(file)}
+            onClick={() => {
+              // 🔥 FIX: Pass path context with file object
+              // CRITICAL: Use file.path if it's explicitly defined (even if empty string means root)
+              // Only fall back to component's path if file.path is truly undefined
+              const fileWithPath = { ...file, path: file.path !== undefined ? file.path : path };
+              onFileSelect?.(fileWithPath);
+            }}
             className="flex-1"
           >
             <File className="h-4 w-4 mr-2 shrink-0" />
