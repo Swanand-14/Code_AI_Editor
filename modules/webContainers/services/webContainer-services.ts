@@ -7,7 +7,7 @@ class WebContainerService {
   private serverUrl: string | null = null;
   private listeners: Map<string, Set<Function>> = new Map();
   private currentProjectId: string | null = null;
-  private sessionId: string | null = null; // 🔥 FIX: Track session ID
+  private sessionId: string | null = null;
 
   async getInstance(): Promise<WebContainer> {
     if (WebContainerService.instance) {
@@ -38,7 +38,6 @@ class WebContainerService {
       console.log(`🌐 Server ready at ${url} on port ${port}`);
       this.serverUrl = url;
       
-      // 🔥 FIX: Extract session ID from WebContainer URL
       const sessionMatch = url.match(/--(\w+)\./);
       if (sessionMatch) {
         this.sessionId = sessionMatch[1];
@@ -81,27 +80,20 @@ class WebContainerService {
     return this.serverUrl;
   }
 
-  // 🔥 NEW: Get session ID for new tab feature
   getSessionId(): string | null {
     return this.sessionId;
   }
 
-  // 🔥 NEW: Get full preview URL for opening in new tab
   getPreviewUrl(): string | null {
     if (!this.serverUrl) return null;
     return `/preview/webcontainer?url=${encodeURIComponent(this.serverUrl)}`;
   }
 
-  /**
-   * 🔥 FIX: Properly clear project and wait for completion
-   */
   async clearProject(): Promise<void> {
     console.log("🧹 Clearing project files...");
     
-    // Stop server first
     this.stopDevServer();
     
-    // Clear URLs and IDs
     this.serverUrl = null;
     this.sessionId = null;
     this.currentProjectId = null;
@@ -112,8 +104,10 @@ class WebContainerService {
       const files = await instance.fs.readdir("/");
       
       for (const file of files) {
-        // Skip WebContainer internal directories
-        if (file === "tmp" || file === ".webcontainer") continue;
+        if (file === "tmp" || file === ".webcontainer" || file === "node_modules"){
+          console.log(`Preserving: /${file}`);
+          continue; 
+        }
         
         try {
           await instance.fs.rm(`/${file}`, { recursive: true, force: true });
@@ -123,19 +117,15 @@ class WebContainerService {
         }
       }
       
-      console.log("✅ Project completely cleared");
+      console.log("✅ Project completely cleared (except node_modules and internal dirs)");
     } catch (error) {
       console.error("❌ Failed to clear project:", error);
     }
   }
 
-  /**
-   * 🔥 FIX: Await cleanup when switching projects
-   */
   async setCurrentProject(projectId: string): Promise<void> {
     if (this.currentProjectId && this.currentProjectId !== projectId) {
       console.log(`🔄 Switching projects: ${this.currentProjectId} → ${projectId}`);
-      // 🔥 CRITICAL: Wait for cleanup to complete
       await this.clearProject();
     }
     this.currentProjectId = projectId;
@@ -182,7 +172,7 @@ class WebContainerService {
   }
 
   /**
-   * 🔥 FIX: Better script detection with proper 'start' handling
+   * 🔥 FIX: Detect the correct executable based on installed packages
    */
   async detectStartCommand(): Promise<{ command: string; args: string[] }> {
     try {
@@ -200,7 +190,6 @@ class WebContainerService {
       
       if (scripts.start) {
         console.log("✅ Using 'start' script");
-        // 🔥 FIX: Use 'npm start' (not 'npm run start')
         return { command: "npm", args: ["start"] };
       }
       
@@ -209,19 +198,106 @@ class WebContainerService {
         return { command: "npm", args: ["run", "serve"] };
       }
 
-      // Fallback
       console.warn("⚠️ No dev/start/serve script found, defaulting to 'npm start'");
       return { command: "npm", args: ["start"] };
     } catch (error) {
       console.error("❌ Failed to read package.json:", error);
-      // Safe fallback
       return { command: "npm", args: ["run", "dev"] };
     }
   }
 
   /**
-   * 🔥 FIX: Improved server start with URL detection from output
+   * 🔥 NEW: Verify that critical binaries exist after npm install
    */
+  async verifyBinaries(): Promise<boolean> {
+    try {
+      const instance = await this.getInstance();
+      
+      // Check if .bin directory exists
+      try {
+        const binFiles = await instance.fs.readdir('/node_modules/.bin');
+        console.log(`📂 .bin directory has ${binFiles.length} files`);
+        
+        if (binFiles.length === 0) {
+          console.warn('⚠️ .bin directory is empty');
+          return false;
+        }
+        
+        return true;
+      } catch (error) {
+        console.error('❌ .bin directory not found');
+        return false;
+      }
+    } catch (error) {
+      console.error('❌ Error verifying binaries:', error);
+      return false;
+    }
+  }
+
+  /**
+   * 🔥 FIXED: Install dependencies with proper .bin setup
+   */
+  async installDependencies(onOutput?: (data: string) => void): Promise<number> {
+    const instance = await this.getInstance();
+    
+    console.log("📦 Installing dependencies...");
+    const installProcess = await instance.spawn("npm", ["install"]);
+
+    if (onOutput) {
+      installProcess.output.pipeTo(
+        new WritableStream({
+          write(data) {
+            onOutput(data);
+          },
+        })
+      );
+    }
+
+    const exitCode = await installProcess.exit;
+    
+    if (exitCode !== 0) {
+      console.error(`❌ npm install failed with code ${exitCode}`);
+      return exitCode;
+    }
+    
+    console.log("✅ npm install completed");
+    
+    // 🔥 FIX: Verify and fix .bin directory
+    const binariesOk = await this.verifyBinaries();
+    
+    if (!binariesOk) {
+      console.log("🔧 Running npm rebuild to fix .bin symlinks...");
+      
+      const rebuildProcess = await instance.spawn("npm", ["rebuild"]);
+      
+      if (onOutput) {
+        rebuildProcess.output.pipeTo(
+          new WritableStream({
+            write(data) {
+              onOutput(data);
+            },
+          })
+        );
+      }
+      
+      const rebuildExit = await rebuildProcess.exit;
+      
+      if (rebuildExit === 0) {
+        console.log("✅ npm rebuild completed");
+        
+        // Verify again
+        const binariesOkAfterRebuild = await this.verifyBinaries();
+        if (!binariesOkAfterRebuild) {
+          console.error("❌ .bin directory still not set up correctly after rebuild");
+        }
+      } else {
+        console.error(`❌ npm rebuild failed with code ${rebuildExit}`);
+      }
+    }
+    
+    return exitCode;
+  }
+
   async startDevServer(
     command?: string,
     args?: string[],
@@ -236,7 +312,6 @@ class WebContainerService {
     let finalCommand = command;
     let finalArgs = args;
     
-    // 🔥 FIX: Auto-detect if not provided
     if (!command || !args) {
       const detected = await this.detectStartCommand();
       finalCommand = detected.command;
@@ -245,14 +320,10 @@ class WebContainerService {
     
     console.log(`🚀 Starting server: ${finalCommand} ${finalArgs!.join(" ")}`);
     
-    // 🔥 FIX: Monitor output for server URL patterns
     const outputStream = new WritableStream({
       write: (data) => {
         console.log("📝 Server output:", data);
-        
-        // Try to detect URL from output
         this.detectServerUrlFromOutput(data);
-        
         if (onOutput) onOutput(data);
       },
     });
@@ -260,7 +331,6 @@ class WebContainerService {
     this.devServerProcess = await instance.spawn(finalCommand!, finalArgs!);
     this.devServerProcess.output.pipeTo(outputStream);
 
-    // Handle exit
     this.devServerProcess.exit.then((code: number) => {
       console.log(`Dev server exited with code ${code}`);
       this.devServerProcess = null;
@@ -272,13 +342,9 @@ class WebContainerService {
     });
   }
 
-  /**
-   * 🔥 NEW: Detect server URL from console output as fallback
-   */
   private detectServerUrlFromOutput(output: string): void {
-    if (this.serverUrl) return; // Already have URL
+    if (this.serverUrl) return;
 
-    // Common patterns in server output
     const patterns = [
       /Local:?\s+(https?:\/\/[^\s]+)/i,
       /listening on (https?:\/\/[^\s]+)/i,
@@ -297,11 +363,9 @@ class WebContainerService {
         console.log(`🔍 Detected server URL from output: ${url}`);
         this.serverUrl = url;
         
-        // Extract port
         const portMatch = url.match(/:(\d+)/);
         const port = portMatch ? parseInt(portMatch[1]) : 3000;
         
-        // Extract session ID
         const sessionMatch = url.match(/--(\w+)\./);
         if (sessionMatch) {
           this.sessionId = sessionMatch[1];
@@ -313,9 +377,6 @@ class WebContainerService {
     }
   }
 
-  /**
-   * 🔥 FIX: Restart with auto-detected command
-   */
   async restartDevServer(onOutput?: (data: string) => void): Promise<void> {
     console.log("🔄 Restarting dev server...");
 
@@ -327,8 +388,6 @@ class WebContainerService {
     }
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    
-    // 🔥 FIX: Auto-detect on restart (don't hardcode)
     await this.startDevServer(undefined, undefined, onOutput);
   }
 
@@ -342,23 +401,14 @@ class WebContainerService {
     }
   }
 
-  async installDependencies(onOutput?: (data: string) => void): Promise<number> {
-    const instance = await this.getInstance();
-    
-    console.log("📦 Installing dependencies...");
-    const installProcess = await instance.spawn("npm", ["install"]);
-
-    if (onOutput) {
-      installProcess.output.pipeTo(
-        new WritableStream({
-          write(data) {
-            onOutput(data);
-          },
-        })
-      );
+  async directoryExists(path: string): Promise<boolean> {
+    try {
+      const instance = await this.getInstance();
+      await instance.fs.readdir(path);
+      return true;
+    } catch (error) {
+      return false;
     }
-
-    return await installProcess.exit;
   }
 
   isServerRunning(): boolean {
