@@ -86,6 +86,7 @@ export const useWebContainer = ({
       console.log("🎯 Server ready:", url);
       setServerUrl(url);
       setIsServerRunning(true);
+      writeToTerminal(`\r\n✅ Server ready at: ${url}\r\n`);
     };
 
     webContainerService.on("server-ready", handleServerReady);
@@ -93,7 +94,7 @@ export const useWebContainer = ({
     return () => {
       webContainerService.off("server-ready", handleServerReady);
     };
-  }, []);
+  }, [writeToTerminal]);
 
   const detectTemplateType = useCallback((packageJsonContent: string): string | null => {
     try {
@@ -435,6 +436,7 @@ export const useWebContainer = ({
 
         // Auto-start server
         if (autoStart) {
+          writeToTerminal("🚀 Auto-starting server...\r\n");
           console.log("🚀 Auto-starting server...");
           await startServer();
         }
@@ -443,6 +445,7 @@ export const useWebContainer = ({
       } catch (err) {
         console.error("❌ Setup error:", err);
         setError(err instanceof Error ? err.message : "Setup failed");
+        writeToTerminal(`❌ Setup failed: ${err instanceof Error ? err.message : "Unknown error"}\r\n`);
         setIsLoading(false);
         hasInitialized.current = false;
       }
@@ -465,17 +468,20 @@ export const useWebContainer = ({
     }
 
     try {
+      writeToTerminal(" Starting dev server...\r\n");
       console.log("🎬 Starting dev server...");
       await webContainerService.startDevServer();
       setIsServerRunning(true);
     } catch (err) {
       console.error("Failed to start server:", err);
       setError(err instanceof Error ? err.message : "Failed to start server");
+      writeToTerminal(`❌ Failed to start server: ${err instanceof Error ? err.message : "Unknown error"}\r\n`);
     }
-  }, []);
+  }, [writeToTerminal]);
 
   const restartServer = useCallback(async () => {
     try {
+       writeToTerminal("🔄 Restarting server...\r\n");
       console.log("🔄 Restarting server...");
       setIsServerRunning(false);
       setServerUrl(null);
@@ -483,8 +489,9 @@ export const useWebContainer = ({
     } catch (err) {
       console.error("Failed to restart server:", err);
       setError(err instanceof Error ? err.message : "Failed to restart server");
+       writeToTerminal(`❌ Failed to restart server: ${err instanceof Error ? err.message : "Unknown error"}\r\n`);
     }
-  }, []);
+  }, [writeToTerminal]);
 
   const stopServer = useCallback(() => {
     console.log("🛑 Stopping server...");
