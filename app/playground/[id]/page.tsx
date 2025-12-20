@@ -8,6 +8,7 @@ import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { fileSyncService } from "@/modules/playground/services/file-sync-service";
 import { webContainerService } from "@/modules/webContainers/services/webContainer-services";
+import { StartCollabButton } from "@/modules/collaboration/components/StartCollaborationButton";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -622,6 +623,7 @@ useEffect(() => {
     </TooltipTrigger>
     <TooltipContent>Create GitHub Repository</TooltipContent>
   </Tooltip>
+                <StartCollabButton playgroundId={id} playgroundName={playgroundData?.name} />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
