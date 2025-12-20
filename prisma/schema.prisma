@@ -78,6 +78,8 @@ model User {
   staredPlayground StarMark[]
   chatMessages  ChatMessage[]
   githubRepositories GitHubRepository[]
+  hostedSessions CollabSession[] @relation("HostedSessions")
+  collabParticipations CollabParticipant[] @relation("CollabParticipants")
   
 
   @@map("users")
@@ -142,4 +144,50 @@ model ChatMessage {
 
   @@map("chatMessages")
   @@index([UserId])
+}
+
+model CollabSession {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  sessionId String @unique // This already creates an index, no need for @@index
+  projectType String
+  templateId String? @db.ObjectId // Made optional
+  playgroundId String? @db.ObjectId // Made optional
+  templateSnapshot Json?
+
+  repoOwner String?
+  repoName String?
+  branch String?
+
+  hostId String? @db.ObjectId // Made optional for anonymous users
+  hostType String @default("authenticated") // authenticated | anonymous
+  hostUser User? @relation("HostedSessions", fields: [hostId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  isActive Boolean @default(true)
+
+  participants CollabParticipant[]
+
+  @@map("collab_sessions")
+  
+  @@index([playgroundId])
+  @@index([hostId])
+  @@index([templateId])
+}
+
+model CollabParticipant {
+  id String @id @default(auto()) @map("_id") @db.ObjectId
+  sessionId String @db.ObjectId
+  userId String? @db.ObjectId
+  role String @default("viewer") // viewer | editor | host
+  displayName String? // Fixed typo: was "dislpayName"
+  joinedAt DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+
+  session CollabSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user User? @relation("CollabParticipants", fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  
+  @@unique([sessionId, userId])
+  @@map("collab_participants")
+  @@index([sessionId])
 }

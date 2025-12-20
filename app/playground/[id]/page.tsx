@@ -46,6 +46,7 @@ import { CreateGithubRepoDialog,RepoCreationData } from "@/modules/playground/co
 import { createGitHubRepository } from "@/modules/github/actions";
 import { convertTemplateToFiles } from "@/modules/playground/lib/template-to-files";
 import { useRouter } from "next/navigation";
+import TerminalComponent,{TerminalRef} from "@/modules/webContainers/components/terminal";
 
 function MainPlaygroundPage() {
   const { id } = useParams<{ id: string }>();
@@ -57,6 +58,7 @@ function MainPlaygroundPage() {
   const { playgroundData, templateData, isLoading, error, saveTemplateData } =
     usePlayground(id);
   const AiSuggestions = UseAiSuggestions();
+  const terminalRef = useRef<TerminalRef>(null)
   const {
     setTemplateData,
     setPlaygroundId,
@@ -83,7 +85,7 @@ function MainPlaygroundPage() {
     instance: webContainerInstance,
     writeFileSync,
     restartServer
-  } = useWebContainer({ templateData,projectId:id });
+  } = useWebContainer({ templateData,projectId:id,terminalRef });
 
   const lastSyncedContent = useRef<Map<string, string>>(new Map());
 
@@ -806,6 +808,7 @@ useEffect(() => {
                         error={webContainerError}
                         instance={webContainerInstance}
                         writeFileSync={writeFileSync}
+                        terminalRef={terminalRef}  // ← Add this line
                       />
                     </ResizablePanel>
                   </>

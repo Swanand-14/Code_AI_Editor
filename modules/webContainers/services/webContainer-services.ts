@@ -175,36 +175,74 @@ class WebContainerService {
    * 🔥 FIX: Detect the correct executable based on installed packages
    */
   async detectStartCommand(): Promise<{ command: string; args: string[] }> {
-    try {
-      const packageJson = await this.readFile("package.json");
-      const pkg = JSON.parse(packageJson);
-      const scripts = pkg.scripts || {};
+  try {
+    const packageJson = await this.readFile("package.json");
+    const pkg = JSON.parse(packageJson);
+    const scripts = pkg.scripts || {};
+    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
 
-      console.log("📜 Available scripts:", Object.keys(scripts));
+    console.log("📜 Available scripts:", Object.keys(scripts));
 
-      // Priority order for start commands
-      if (scripts.dev) {
-        console.log("✅ Using 'dev' script");
+    // Special handling for Next.js
+    if (deps.next) {
+      const nextVersionStr = deps.next;
+      const majorVersion = parseInt(nextVersionStr.match(/\d+/)?.[0] || "13");
+      
+      console.log(`📦 Next.js detected: ${nextVersionStr} (major: ${majorVersion})`);
+
+      // Determine the correct dev script based on version
+      let devScript = scripts.dev || "next dev";
+
+      // Parse the current script to see if it already has flags
+      const hasWebpackFlag = devScript.includes("--webpack");
+      const hasExperimentalWebpack = devScript.includes("--experimental-webpack");
+
+      // If package.json already has the correct setup, use it as-is
+      if (scripts.dev && (hasWebpackFlag || hasExperimentalWebpack)) {
+        console.log(`✅ Using existing dev script: ${scripts.dev}`);
         return { command: "npm", args: ["run", "dev"] };
       }
-      
-      if (scripts.start) {
-        console.log("✅ Using 'start' script");
-        return { command: "npm", args: ["start"] };
-      }
-      
-      if (scripts.serve) {
-        console.log("✅ Using 'serve' script");
-        return { command: "npm", args: ["run", "serve"] };
-      }
 
-      console.warn("⚠️ No dev/start/serve script found, defaulting to 'npm start'");
-      return { command: "npm", args: ["start"] };
-    } catch (error) {
-      console.error("❌ Failed to read package.json:", error);
+      // Otherwise, construct the appropriate command
+      if (majorVersion >= 16) {
+        console.log("✅ Using 'next dev --webpack' for Next.js 16+");
+        return { command: "npm", args: ["run", "dev"] };
+      } else if (majorVersion === 15) {
+        console.log("✅ Using 'next dev --experimental-webpack' for Next.js 15");
+        return { command: "npm", args: ["run", "dev"] };
+      } else {
+        console.log("✅ Using plain 'next dev' for Next.js 13-14");
+        return { command: "npm", args: ["run", "dev"] };
+      }
+    }
+
+    // Priority order for other frameworks
+    if (scripts.dev) {
+      console.log("✅ Using 'dev' script");
       return { command: "npm", args: ["run", "dev"] };
     }
+    
+    if (scripts.start) {
+      console.log("✅ Using 'start' script");
+      return { command: "npm", args: ["start"] };
+    }
+    
+    if (scripts.serve) {
+      console.log("✅ Using 'serve' script");
+      return { command: "npm", args: ["run", "serve"] };
+    }
+
+    console.warn("⚠️ No dev/start/serve script found, defaulting to 'npm start'");
+    return { command: "npm", args: ["start"] };
+  } catch (error) {
+    console.error("❌ Failed to read package.json:", error);
+    return { command: "npm", args: ["run", "dev"] };
   }
+}
+handleServerError(callback: (data: { code: number }) => void) {
+  this.on("server-error", callback);
+}
+
 
   /**
    * 🔥 NEW: Verify that critical binaries exist after npm install
@@ -298,36 +336,37 @@ class WebContainerService {
     return exitCode;
   }
 
-  async startDevServer(
-    command?: string,
-    args?: string[],
-    onOutput?: (data: string) => void
-  ): Promise<void> {
-    if (this.devServerProcess) {
-      console.log("⚠️ Dev server already running");
-      return;
-    }
+async startDevServer(
+  command?: string,
+  args?: string[],
+  onOutput?: (data: string) => void
+): Promise<void> {
+  if (this.devServerProcess) {
+    console.log("⚠️ Dev server already running");
+    return;
+  }
 
-    const instance = await this.getInstance();
-    let finalCommand = command;
-    let finalArgs = args;
-    
-    if (!command || !args) {
-      const detected = await this.detectStartCommand();
-      finalCommand = detected.command;
-      finalArgs = detected.args;
-    }
-    
-    console.log(`🚀 Starting server: ${finalCommand} ${finalArgs!.join(" ")}`);
-    
-    const outputStream = new WritableStream({
-      write: (data) => {
-        console.log("📝 Server output:", data);
-        this.detectServerUrlFromOutput(data);
-        if (onOutput) onOutput(data);
-      },
-    });
+  const instance = await this.getInstance();
+  let finalCommand = command;
+  let finalArgs = args;
+  
+  if (!command || !args) {
+    const detected = await this.detectStartCommand();
+    finalCommand = detected.command;
+    finalArgs = detected.args;
+  }
+  
+  console.log(`🚀 Starting server: ${finalCommand} ${finalArgs!.join(" ")}`);
+  
+  const outputStream = new WritableStream({
+    write: (data) => {
+      console.log("📝 Server output:", data);
+      this.detectServerUrlFromOutput(data);
+      if (onOutput) onOutput(data);
+    },
+  });
 
+  try {
     this.devServerProcess = await instance.spawn(finalCommand!, finalArgs!);
     this.devServerProcess.output.pipeTo(outputStream);
 
@@ -335,12 +374,18 @@ class WebContainerService {
       console.log(`Dev server exited with code ${code}`);
       this.devServerProcess = null;
       
-      if (code !== 0) {
+      if (code !== 0 && code !== 143) { // 143 is SIGTERM (normal shutdown)
         console.error("❌ Server failed to start");
         this.emit("server-error", { code });
       }
     });
+  } catch (error) {
+    console.error("❌ Failed to spawn dev server:", error);
+    this.devServerProcess = null;
+    this.emit("server-error", { code: -1 });
+    throw error;
   }
+}
 
   private detectServerUrlFromOutput(output: string): void {
     if (this.serverUrl) return;

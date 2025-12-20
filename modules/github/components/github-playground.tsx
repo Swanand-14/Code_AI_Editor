@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { 
   fetchRepositoryTree, 
@@ -14,8 +14,10 @@ import {
 import { GitHubFileTree } from "./github-file-tree"
 import { BranchSelector } from "./branch-selector"
 import PlaygroundEditor from "@/modules/playground/components/playgroundEditor"
+import { WebContainerPreview } from "@/modules/webContainers/components/WebContainerPreview"
+import { useWebContainerForGithub } from "@/modules/webContainers/hooks/useWebContainerForGithub"
 import { Button } from "@/components/ui/button"
-import { GitCommit, Loader2, RefreshCw, ArrowLeft ,GitCompare} from "lucide-react"
+import { GitCommit, Loader2, RefreshCw, ArrowLeft, GitCompare, Play, Square } from "lucide-react"
 import { toast } from "sonner"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
@@ -33,6 +35,12 @@ import {
 import { NewFileDialog } from "./dialogs/new-file-dialog"
 import { NewFolderDialog } from "./dialogs/new-folder-dialog"
 import { DiffViewer } from "./diff-viewer"
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable"
+import { TerminalRef } from "@/modules/playground/components/terminal"
 
 interface GitHubFile {
   name: string
@@ -69,56 +77,93 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
   const [fileToDelete, setFileToDelete] = useState<GitHubFile | null>(null)
   const [deleteFolderDialogOpen, setDeleteFolderDialogOpen] = useState(false)
   const [folderToDelete, setFolderToDelete] = useState<{ path: string; name: string } | null>(null)
-  const [expandedDirs,setExpandedDirs] = useState<Set<string>>(new Set([""]))
-  const [showDiff,setShowDiff] = useState(false)
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([""]))
+  const [showDiff, setShowDiff] = useState(false)
+  const [showPreview, setShowPreview] = useState(false)
   
   const router = useRouter()
+  const terminalRef = useRef<TerminalRef>(null)
+
+  // WebContainer integration
+  const {
+    serverUrl,
+    isLoading: isWebContainerLoading,
+    error: webContainerError,
+    instance: webContainerInstance,
+    isServerRunning,
+    isSupported: isWebContainerSupported,
+    projectType,
+    startServer,
+    restartServer,
+    stopServer,
+    writeFileSync,
+  } = useWebContainerForGithub({
+    files,
+    repoFullName,
+    currentBranch,
+    terminalRef,
+    autoStart: false, // Manual start via button
+  })
 
   useEffect(() => {
     loadRepositoryTree()
   }, [currentBranch])
 
-  async function loadRepositoryTree(retryCount =0,maxTries = 3) {
-
+  async function loadRepositoryTree(retryCount = 0, maxTries = 3) {
     setIsLoadingTree(true)
     try {
       const result = await fetchRepositoryTree(owner, repo, currentBranch)
       
       if (result.success) {
-        setFiles(result.data)
+        // Fetch content for all files
+        const filesWithContent = await Promise.all(
+          result.data.map(async (file: GitHubFile) => {
+            if (file.type === "file") {
+              const contentResult = await fetchFileContent(
+                owner,
+                repo,
+                file.path,
+                currentBranch
+              )
+              if (contentResult.success) {
+                return { ...file, content: contentResult.data }
+              }
+            }
+            return file
+          })
+        )
+        
+        setFiles(filesWithContent)
       } else {
-        if(retryCount<maxTries && result.error?.includes("404")){
-          toast.loading(`Repository initializing ...Retry ${retryCount+1}/${maxTries}`,{
-            id:"load-tree"
+        if (retryCount < maxTries && result.error?.includes("404")) {
+          toast.loading(`Repository initializing... Retry ${retryCount + 1}/${maxTries}`, {
+            id: "load-tree"
           })
 
-          await new Promise(resolve=>setTimeout(resolve,2000))
-          return loadRepositoryTree(retryCount+1,maxTries)
+          await new Promise(resolve => setTimeout(resolve, 2000))
+          return loadRepositoryTree(retryCount + 1, maxTries)
         }
-        toast.error(result.error || "Failed to load respository")
+        toast.error(result.error || "Failed to load repository")
       }
     } catch (error) {
-      console.error("Error loading tree",error)
+      console.error("Error loading tree", error)
       toast.error("Failed to load repository")
-    }finally{
+    } finally {
       setIsLoadingTree(false)
     }
-    
-    
   }
 
   function handleBranchChange(branch: string) {
-    // Close current file when switching branches
     setOpenFile(null)
     setCurrentBranch(branch)
     setExpandedDirs(new Set([""]))
+    setShowPreview(false)
     toast.success(`Switched to ${branch}`)
   }
 
   async function handleFileSelect(file: GitHubFile) {
     if (file.type === "dir") return
 
-    // Warn if there are unsaved changes
     if (openFile?.hasChanges) {
       const confirm = window.confirm(
         "You have unsaved changes. Are you sure you want to switch files?"
@@ -152,6 +197,11 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
       content: newContent,
       hasChanges: newContent !== openFile.originalContent,
     })
+
+    // Sync to WebContainer if supported
+    if (isWebContainerSupported && webContainerInstance) {
+      writeFileSync(openFile.path, newContent).catch(console.error)
+    }
   }
 
   async function handleSave() {
@@ -225,14 +275,14 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
       if (path) {
         setExpandedDirs(prev => new Set([...prev, path]))
       }
-      //await loadRepositoryTree()
       
       const newFile: GitHubFile = {
         name: filename,
         path: fullPath,
         sha: result.data.content.sha,
         size: 0,
-        type: "file"
+        type: "file",
+        content: ""
       }
       setFiles(prev => [...prev, newFile])
       handleFileSelect(newFile)
@@ -259,21 +309,22 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
     
     if (result.success) {
       toast.success(`Created ${folderName} folder`)
-       if (path) {
+      if (path) {
         setExpandedDirs(prev => new Set([...prev, path, fullPath]))
       } else {
         setExpandedDirs(prev => new Set([...prev, fullPath]))
       }
-      //await loadRepositoryTree()
+      
       const gitkeepPath = `${fullPath}/.gitkeep`
-  const newFile: GitHubFile = {
-    name: ".gitkeep",
-    path: gitkeepPath,
-    sha: result.data?.content?.sha || result.data?.commit?.sha || "",
-    size: 0,
-    type: "file"
-  }
-  setFiles(prev => [...prev, newFile])
+      const newFile: GitHubFile = {
+        name: ".gitkeep",
+        path: gitkeepPath,
+        sha: result.data?.content?.sha || result.data?.commit?.sha || "",
+        size: 0,
+        type: "file",
+        content: ""
+      }
+      setFiles(prev => [...prev, newFile])
     } else {
       throw new Error(result.error || "Failed to create folder")
     }
@@ -302,8 +353,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
       if (openFile?.path === fileToDelete.path) {
         setOpenFile(null)
       }
-     setFiles(prev => prev.filter(f => f.path !== fileToDelete.path))
-      //await loadRepositoryTree()
+      setFiles(prev => prev.filter(f => f.path !== fileToDelete.path))
       setDeleteDialogOpen(false)
       setFileToDelete(null)
     } else {
@@ -358,10 +408,10 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
         return next
       })
       
-       setFiles(prev => prev.filter(file => 
-    !file.path.startsWith(folderToDelete.path + '/') && 
-    file.path !== folderToDelete.path
-  ))
+      setFiles(prev => prev.filter(file => 
+        !file.path.startsWith(folderToDelete.path + '/') && 
+        file.path !== folderToDelete.path
+      ))
       setDeleteFolderDialogOpen(false)
       setFolderToDelete(null)
     } else {
@@ -421,6 +471,77 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
               <RefreshCw className={`h-3 w-3 ${isLoadingTree ? "animate-spin" : ""}`} />
             </Button>
           </div>
+
+          {/* WebContainer Status & Controls */}
+          {isWebContainerSupported && (
+            <div className="pt-2 border-t space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${isServerRunning ? 'bg-green-500' : 'bg-gray-400'}`} />
+                  <span className="text-xs font-medium">
+                    {projectType || "Web Project"}
+                  </span>
+                </div>
+              </div>
+              
+              <div className="flex gap-1">
+                {!isServerRunning ? (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      startServer()
+                      setShowPreview(true)
+                    }}
+                    disabled={isWebContainerLoading}
+                    className="flex-1"
+                  >
+                    <Play className="h-3 w-3 mr-1" />
+                    Run
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={stopServer}
+                      className="flex-1"
+                    >
+                      <Square className="h-3 w-3 mr-1" />
+                      Stop
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={restartServer}
+                      className="flex-1"
+                    >
+                      <RefreshCw className="h-3 w-3 mr-1" />
+                      Restart
+                    </Button>
+                  </>
+                )}
+              </div>
+              
+              {isServerRunning && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setShowPreview(!showPreview)}
+                  className="w-full"
+                >
+                  {showPreview ? "Hide" : "Show"} Preview
+                </Button>
+              )}
+            </div>
+          )}
+
+          {!isWebContainerSupported && !isLoadingTree && files.length > 0 && (
+            <div className="pt-2 border-t">
+              <p className="text-xs text-muted-foreground">
+                Not a runnable web project
+              </p>
+            </div>
+          )}
         </div>
         
         <div className="flex-1 overflow-auto">
@@ -444,103 +565,125 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
         </div>
       </div>
 
-      {/* Editor Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <div className="h-16 border-b flex items-center justify-between px-4 bg-background">
-          <div className="flex items-center gap-3">
-            {openFile && (
-              <>
-                <div className="flex flex-col">
-                  <span className="text-sm font-medium">
-                    {openFile.path.split("/").pop()}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {openFile.path}
-                  </span>
-                </div>
-                {openFile.hasChanges && (
-                  <div className="flex items-center gap-1 text-xs text-orange-600">
-                    <span className="h-2 w-2 rounded-full bg-orange-500" />
-                    <span>Unsaved</span>
-                  </div>
+      {/* Main Content Area */}
+      <ResizablePanelGroup direction="horizontal" className="flex-1">
+        {/* Editor Panel */}
+        <ResizablePanel defaultSize={showPreview ? 50 : 100} minSize={30}>
+          <div className="flex flex-col h-full">
+            {/* Header */}
+            <div className="h-16 border-b flex items-center justify-between px-4 bg-background">
+              <div className="flex items-center gap-3">
+                {openFile && (
+                  <>
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium">
+                        {openFile.path.split("/").pop()}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {openFile.path}
+                      </span>
+                    </div>
+                    {openFile.hasChanges && (
+                      <div className="flex items-center gap-1 text-xs text-orange-600">
+                        <span className="h-2 w-2 rounded-full bg-orange-500" />
+                        <span>Unsaved</span>
+                      </div>
+                    )}
+                  </>
                 )}
-              </>
-            )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {openFile?.hasChanges && (
+                  <>
+                    <Button
+                      onClick={() => setShowDiff(!showDiff)}
+                      variant="outline"
+                      size="sm"
+                    >
+                      <GitCompare className="h-4 w-4 mr-2" />
+                      {showDiff ? "Hide Diff" : "View Diff"}
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        if (window.confirm("Discard all changes?")) {
+                          setOpenFile({
+                            ...openFile,
+                            content: openFile.originalContent,
+                            hasChanges: false,
+                          })
+                          setShowDiff(false)
+                        }
+                      }}
+                      variant="ghost"
+                      size="sm"
+                    >
+                      Discard
+                    </Button>
+                    <Button onClick={handleSave} size="sm" disabled={isSaving}>
+                      <GitCommit className="h-4 w-4 mr-2" />
+                      Commit Changes
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Editor */}
+            <div className="flex-1 overflow-hidden">
+              {isLoadingFile ? (
+                <div className="flex items-center justify-center h-full">
+                  <Loader2 className="h-8 w-8 animate-spin" />
+                </div>
+              ) : openFile ? (
+                showDiff ? (
+                  <DiffViewer
+                    originalContent={openFile.originalContent}
+                    modifiedContent={openFile.content}
+                    filepath={openFile.path}
+                    onClose={() => setShowDiff(false)}
+                  />
+                ) : (
+                  <PlaygroundEditor
+                    activeFile={{
+                      filename: openFile.path.split("/").pop()?.split(".")[0] || "file",
+                      fileExtension: openFile.path.split(".").pop() || "txt",
+                      content: openFile.content,
+                    }}
+                    content={openFile.content}
+                    onContentChange={handleContentChange}
+                    suggestionLoading={false}
+                  />
+                )
+              ) : (
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                  <p className="text-lg">Select a file to start editing</p>
+                  <p className="text-sm mt-2">Changes will be committed to {currentBranch}</p>
+                </div>
+              )}
+            </div>
           </div>
+        </ResizablePanel>
 
-          <div className="flex items-center gap-2">
-            {openFile?.hasChanges && (
-              <>
-              <Button onClick={()=>setShowDiff(!showDiff)}
-              variant="outline"
-              size="sm"
-              >
-                <GitCompare className="h-4 w-4 mr-2"/>
-                {showDiff? "Hide Diff":"View Diff"}
-              </Button>
-                <Button
-                  onClick={() => {
-                    if (window.confirm("Discard all changes?")) {
-                      setOpenFile({
-                        ...openFile,
-                        content: openFile.originalContent,
-                        hasChanges: false,
-                      })
-                      setShowDiff(false)
-                    }
-                  }}
-                  variant="ghost"
-                  size="sm"
-                >
-                  Discard
-                </Button>
-                <Button onClick={handleSave} size="sm" disabled={isSaving}>
-                  <GitCommit className="h-4 w-4 mr-2" />
-                  Commit Changes
-                </Button>
-              </>
-            )}
-          </div>
-        </div>
+        {/* Preview Panel (conditionally rendered) */}
+        {showPreview && isWebContainerSupported && (
+          <>
+            <ResizableHandle />
+            <ResizablePanel defaultSize={50} minSize={30}>
+              <WebContainerPreview
+                serverUrl={serverUrl}
+                isLoading={isWebContainerLoading}
+                error={webContainerError}
+                instance={webContainerInstance}
+                onRestartServer={restartServer}
+                terminalRef={terminalRef}
+              />
+            </ResizablePanel>
+          </>
+        )}
+      </ResizablePanelGroup>
 
-        {/* Editor */}
-       <div className="flex-1 overflow-hidden">
-  {isLoadingFile ? (
-    <div className="flex items-center justify-center h-full">
-      <Loader2 className="h-8 w-8 animate-spin" />
-    </div>
-  ) : openFile ? (
-    // REPLACE THIS ENTIRE SECTION
-    showDiff ? (
-      <DiffViewer
-        originalContent={openFile.originalContent}
-        modifiedContent={openFile.content}
-        filepath={openFile.path}
-        onClose={() => setShowDiff(false)}
-      />
-    ) : (
-      <PlaygroundEditor
-        activeFile={{
-          filename: openFile.path.split("/").pop()?.split(".")[0] || "file",
-          fileExtension: openFile.path.split(".").pop() || "txt",
-          content: openFile.content,
-        }}
-        content={openFile.content}
-        onContentChange={handleContentChange}
-        suggestionLoading={false}
-      />
-    )
-  ) : (
-    <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-      <p className="text-lg">Select a file to start editing</p>
-      <p className="text-sm mt-2">Changes will be committed to {currentBranch}</p>
-    </div>
-  )}
-</div>
-      </div>
-
-      {/* Commit Dialog */}
+      {/* Dialogs (commit, new file, delete, etc.) */}
       <Dialog open={commitDialogOpen} onOpenChange={setCommitDialogOpen}>
         <DialogContent>
           <DialogHeader>
@@ -605,7 +748,6 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
         </DialogContent>
       </Dialog>
 
-      {/* New File Dialog */}
       <NewFileDialog
         open={newFileDialogOpen}
         onOpenChange={setNewFileDialogOpen}
@@ -613,7 +755,6 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
         currentPath={currentContextPath}
       />
 
-      {/* New Folder Dialog */}
       <NewFolderDialog
         open={newFolderDialogOpen}
         onOpenChange={setNewFolderDialogOpen}
@@ -621,7 +762,6 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
         currentPath={currentContextPath}
       />
 
-      {/* Delete File Confirmation Dialog */}
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -643,7 +783,6 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Delete Folder Confirmation Dialog */}
       <AlertDialog open={deleteFolderDialogOpen} onOpenChange={setDeleteFolderDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>

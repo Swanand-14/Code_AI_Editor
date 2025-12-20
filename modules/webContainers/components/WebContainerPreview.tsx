@@ -1,11 +1,16 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Loader2, XCircle, RefreshCw, Terminal as TerminalIcon, ArrowLeft, ArrowRight, Globe } from "lucide-react";
+import { Loader2, XCircle, RefreshCw, Globe } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import TerminalComponent from "./terminal";
+import TerminalComponent, { TerminalRef } from "./terminal";
 import { cn } from "@/lib/utils";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
 
 interface WebContainerPreviewProps {
   serverUrl: string | null;
@@ -14,7 +19,8 @@ interface WebContainerPreviewProps {
   instance: any;
   onRestartServer?: () => Promise<void>;
   className?: string;
-  templateData?: any; // 🔥 FIX: Add templateData to listen for file changes
+  templateData?: any;
+  terminalRef?: React.RefObject<TerminalRef>; // Accept terminal ref from parent
 }
 
 export const WebContainerPreview = ({
@@ -24,18 +30,19 @@ export const WebContainerPreview = ({
   instance,
   onRestartServer,
   className,
-  templateData, // 🔥 FIX: Accept templateData
+  templateData,
+  terminalRef: externalTerminalRef, // Receive ref from parent
 }: WebContainerPreviewProps) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const terminalRef = useRef<any>(null);
+  const internalTerminalRef = useRef<TerminalRef>(null);
+  const terminalRef = externalTerminalRef || internalTerminalRef; // Use external if provided
   const [isPreviewReady, setIsPreviewReady] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [showTerminal, setShowTerminal] = useState(true);
   const [currentUrl, setCurrentUrl] = useState<string>("");
   const [addressBarInput, setAddressBarInput] = useState<string>("");
   const healthCheckInterval = useRef<NodeJS.Timeout>();
-  const fileChangeDebounceRef = useRef<NodeJS.Timeout>(); // 🔥 FIX: Debounce file change refreshes
+  const fileChangeDebounceRef = useRef<NodeJS.Timeout>();
   const healthCheckAttempts = useRef(0);
 
   // Health check for server readiness
@@ -105,14 +112,13 @@ export const WebContainerPreview = ({
     };
   }, [serverUrl]);
 
-  // 🔥 FIX: Auto-refresh preview when files change in WebContainer
+  // Auto-refresh preview when files change
   useEffect(() => {
     if (!isPreviewReady || !iframeRef.current) return;
 
     const handleFileChange = (event: CustomEvent) => {
       console.log("📝 File changed event received, debouncing refresh...", event.detail);
       
-      // Debounce to avoid multiple rapid refreshes
       if (fileChangeDebounceRef.current) {
         clearTimeout(fileChangeDebounceRef.current);
       }
@@ -120,7 +126,7 @@ export const WebContainerPreview = ({
       fileChangeDebounceRef.current = setTimeout(() => {
         console.log("🔄 Auto-refreshing preview due to file change...");
         handleForceRefresh();
-      }, 1000); // Wait 1 second after file change to allow server to recompile
+      }, 1000);
     };
 
     window.addEventListener("webcontainerFileChange", handleFileChange as EventListener);
@@ -154,10 +160,8 @@ export const WebContainerPreview = ({
   const handleNavigate = (path: string) => {
     if (!serverUrl) return;
     
-    // Remove leading ../ if present
     let cleanPath = path.replace(/^\.\.\//, "").replace(/^\//, "");
     
-    // Ensure path starts with /
     if (cleanPath && !cleanPath.startsWith("/")) {
       cleanPath = "/" + cleanPath;
     }
@@ -261,16 +265,6 @@ export const WebContainerPreview = ({
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setShowTerminal(!showTerminal)}
-              className="h-7 text-xs"
-            >
-              <TerminalIcon className="h-3 w-3 mr-1" />
-              {showTerminal ? "Hide" : "Show"} Terminal
-            </Button>
-            
-            <Button
-              variant="ghost"
-              size="sm"
               onClick={handleForceRefresh}
               disabled={!serverUrl || isRefreshing}
               className="h-7"
@@ -316,103 +310,112 @@ export const WebContainerPreview = ({
         )}
       </div>
 
-      {/* Main Content Area */}
+      {/* Main Content Area with Resizable Terminal */}
       {serverUrl && isPreviewReady ? (
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* 🔥 FIX #3: Iframe with transparent background for adaptability */}
-          <div className={cn("bg-transparent", showTerminal ? "flex-1" : "h-full")}>
-            {previewError ? (
-              <div className="h-full flex items-center justify-center bg-yellow-50 dark:bg-yellow-900/10">
-                <div className="text-center space-y-3 p-6">
-                  <XCircle className="h-10 w-10 text-yellow-600 dark:text-yellow-400 mx-auto" />
-                  <div>
-                    <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-                      {previewError}
-                    </p>
-                    <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
-                      The preview may still work - trying to load anyway
-                    </p>
+        <ResizablePanelGroup direction="vertical" className="flex-1">
+          {/* Preview Panel */}
+          <ResizablePanel defaultSize={70} minSize={30}>
+            <div className="h-full bg-transparent">
+              {previewError ? (
+                <div className="h-full flex items-center justify-center bg-yellow-50 dark:bg-yellow-900/10">
+                  <div className="text-center space-y-3 p-6">
+                    <XCircle className="h-10 w-10 text-yellow-600 dark:text-yellow-400 mx-auto" />
+                    <div>
+                      <p className="text-sm font-medium text-yellow-800 dark:text-yellow-200">
+                        {previewError}
+                      </p>
+                      <p className="text-xs text-yellow-600 dark:text-yellow-400 mt-1">
+                        The preview may still work - trying to load anyway
+                      </p>
+                    </div>
+                    <Button onClick={handleForceRefresh} size="sm" variant="outline">
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Retry
+                    </Button>
                   </div>
-                  <Button onClick={handleForceRefresh} size="sm" variant="outline">
-                    <RefreshCw className="h-4 w-4 mr-2" />
-                    Retry
-                  </Button>
                 </div>
-              </div>
-            ) : (
-              <iframe
-                ref={iframeRef}
-                src={currentUrl}
-                className="w-full h-full border-none"
-                title="WebContainer Preview"
-                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox"
-                onLoad={handleIframeLoad}
-                onError={handleIframeError}
-                allow="cross-origin-isolated"
-                style={{
-                  backgroundColor: 'inherit',
-                  colorScheme: 'normal'
-                }}
-              />
-            )}
-          </div>
-
-          {/* Terminal */}
-          {showTerminal && (
-            <div className="h-64 border-t">
-              <TerminalComponent
-                ref={terminalRef}
-                webContainerInstance={instance}
-                theme="dark"
-                className="h-full"
-              />
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="flex-1 flex flex-col">
-          <div className="flex-1 flex flex-col items-center justify-center p-8 bg-muted/30">
-            <div className="text-center space-y-4 mb-8">
-              <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
-              <div>
-                <h3 className="text-lg font-semibold">
-                  {serverUrl ? "Waiting for server..." : "Starting development server..."}
-                </h3>
-                <p className="text-sm text-muted-foreground mt-2">
-                  {serverUrl 
-                    ? `Health checking ${serverUrl.split("//")[1]?.split(".")[0] || "server"}...`
-                    : "This may take a few moments"
-                  }
-                </p>
-              </div>
-              
-              {serverUrl && (
-                <div className="flex flex-col items-center gap-2 mt-4">
-                  <code className="text-xs bg-muted px-3 py-1 rounded">
-                    {serverUrl}
-                  </code>
-                  <Button
-                    onClick={handleForceRefresh}
-                    size="sm"
-                    variant="outline"
-                    className="mt-2"
-                  >
-                    Try Loading Anyway
-                  </Button>
-                </div>
+              ) : (
+                <iframe
+                  ref={iframeRef}
+                  src={currentUrl}
+                  className="w-full h-full border-none"
+                  title="WebContainer Preview"
+                  sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox"
+                  onLoad={handleIframeLoad}
+                  onError={handleIframeError}
+                  allow="cross-origin-isolated"
+                  style={{
+                    backgroundColor: 'inherit',
+                    colorScheme: 'normal'
+                  }}
+                />
               )}
             </div>
-          </div>
+          </ResizablePanel>
 
-          <div className="h-64 border-t">
+          {/* Resizable Handle */}
+          <ResizableHandle />
+
+          {/* Terminal Panel - Always Visible */}
+          <ResizablePanel defaultSize={30} minSize={20}>
             <TerminalComponent
               ref={terminalRef}
               webContainerInstance={instance}
               theme="dark"
               className="h-full"
             />
-          </div>
-        </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      ) : (
+        <ResizablePanelGroup direction="vertical" className="flex-1">
+          {/* Loading State */}
+          <ResizablePanel defaultSize={70}>
+            <div className="h-full flex flex-col items-center justify-center p-8 bg-muted/30">
+              <div className="text-center space-y-4">
+                <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
+                <div>
+                  <h3 className="text-lg font-semibold">
+                    {serverUrl ? "Waiting for server..." : "Starting development server..."}
+                  </h3>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    {serverUrl 
+                      ? `Health checking ${serverUrl.split("//")[1]?.split(".")[0] || "server"}...`
+                      : "This may take a few moments"
+                    }
+                  </p>
+                </div>
+                
+                {serverUrl && (
+                  <div className="flex flex-col items-center gap-2 mt-4">
+                    <code className="text-xs bg-muted px-3 py-1 rounded">
+                      {serverUrl}
+                    </code>
+                    <Button
+                      onClick={handleForceRefresh}
+                      size="sm"
+                      variant="outline"
+                      className="mt-2"
+                    >
+                      Try Loading Anyway
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </ResizablePanel>
+
+          <ResizableHandle />
+
+          {/* Terminal - Always Visible */}
+          <ResizablePanel defaultSize={30} minSize={20}>
+            <TerminalComponent
+              ref={terminalRef}
+              webContainerInstance={instance}
+              theme="dark"
+              className="h-full"
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
       )}
     </div>
   );
