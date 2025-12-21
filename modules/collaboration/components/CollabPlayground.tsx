@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Users, Clock, AlertCircle } from "lucide-react";
+import { Users, Clock, AlertCircle, Wifi, WifiOff } from "lucide-react";
 import { toast } from "sonner";
 import { joinCollabSession } from "../actions";
+import { useCollabSocket } from "../hooks/useCollabSocket";
 import type { CollabSessionData } from "../types";
 import { LoadingStep } from "@/modules/playground/components/loader";
+import { currentUser } from "@/modules/auth/actions";
 
 interface CollabPlaygroundProps {
   session: CollabSessionData;
@@ -14,18 +16,31 @@ interface CollabPlaygroundProps {
 export function CollabPlayground({ session }: CollabPlaygroundProps) {
   const [isJoining, setIsJoining] = useState(true);
   const [joinError, setJoinError] = useState<string | null>(null);
+  const [user, setUser] = useState<{ id: string; name: string } | null>(null);
+
+  // Initialize WebSocket connection
+  const { isConnected, participants, socket } = useCollabSocket(
+    session.sessionId,
+    user?.id,
+    user?.name
+  );
 
   useEffect(() => {
     const join = async () => {
+      // Get current user
+      const currentUserData = await currentUser();
+      setUser(currentUserData ? { id: currentUserData.id!, name: currentUserData.name! } : null);
+
+      // Join session
       const result = await joinCollabSession(session.sessionId);
-      
+
       if (!result.success) {
         setJoinError(result.error || "Failed to join session");
         toast.error(result.error);
       } else {
         toast.success("Successfully joined collaboration session!");
       }
-      
+
       setIsJoining(false);
     };
 
@@ -82,62 +97,85 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Clock className="h-4 w-4" />
-            <span>Expires in {hoursRemaining}h</span>
+          <div className="flex items-center gap-4">
+            {/* Connection Status */}
+            <div className="flex items-center gap-2">
+              {isConnected ? (
+                <>
+                  <Wifi className="h-4 w-4 text-green-500" />
+                  <span className="text-sm text-green-600">Connected</span>
+                </>
+              ) : (
+                <>
+                  <WifiOff className="h-4 w-4 text-red-500" />
+                  <span className="text-sm text-red-600">Disconnected</span>
+                </>
+              )}
+            </div>
+
+            {/* Participants */}
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              <span className="text-sm">{participants.length} online</span>
+            </div>
+
+            {/* Expiry */}
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Clock className="h-4 w-4" />
+              <span>Expires in {hoursRemaining}h</span>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Placeholder Content - Replace with actual playground */}
+      {/* Participants List */}
+      {participants.length > 0 && (
+        <div className="border-b bg-muted/10 px-6 py-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            {participants.map((participant) => (
+              <div
+                key={participant.userId}
+                className="flex items-center gap-1 px-2 py-1 bg-background rounded text-sm border"
+              >
+                <div className="h-2 w-2 rounded-full bg-green-500" />
+                <span>{participant.userName}</span>
+                <span className="text-xs text-muted-foreground">({participant.role})</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Playground Content - TO BE INTEGRATED */}
       <div className="flex-1 flex flex-col items-center justify-center p-8">
         <div className="max-w-2xl text-center space-y-4">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
             <Users className="h-8 w-8 text-primary" />
           </div>
-          
+
           <h2 className="text-2xl font-bold">
-            You've Joined the Collaboration Session! 🎉
+            Real-Time Collaboration Active! 🎉
           </h2>
-          
+
           <div className="space-y-2 text-muted-foreground">
+            <p>
+              <strong>WebSocket Status:</strong>{" "}
+              {isConnected ? "✅ Connected" : "❌ Disconnected"}
+            </p>
+            <p>
+              <strong>Active Users:</strong> {participants.length}
+            </p>
             <p>
               <strong>Session ID:</strong> {session.sessionId}
             </p>
-            <p>
-              <strong>Project Type:</strong> {session.projectType}
-            </p>
-            {session.playgroundId && (
-              <p>
-                <strong>Playground ID:</strong> {session.playgroundId}
-              </p>
-            )}
-            {session.templateId && (
-              <p>
-                <strong>Template ID:</strong> {session.templateId}
-              </p>
-            )}
           </div>
 
-          <div className="mt-8 p-4 bg-blue-50 dark:bg-blue-950 rounded-lg border border-blue-200 dark:border-blue-800">
-            <p className="text-sm text-blue-900 dark:text-blue-100">
-              <strong>Next Steps:</strong> Real-time collaboration features
-              (live editing, cursor sync, WebSocket communication) will be
-              implemented in the next phase. For now, this page confirms the
-              session routing works correctly.
+          <div className="mt-8 p-4 bg-green-50 dark:bg-green-950 rounded-lg border border-green-200 dark:border-green-800">
+            <p className="text-sm text-green-900 dark:text-green-100">
+              <strong>✅ Phase 2 Complete:</strong> WebSocket connection is live!
+              Next step: Integrate Monaco editor with real-time sync.
             </p>
           </div>
-
-          {session.templateSnapshot && (
-            <details className="mt-6 text-left">
-              <summary className="cursor-pointer text-sm font-medium">
-                View Template Snapshot (Debug)
-              </summary>
-              <pre className="mt-2 p-4 bg-muted rounded text-xs overflow-auto max-h-96">
-                {JSON.stringify(session.templateSnapshot, null, 2)}
-              </pre>
-            </details>
-          )}
         </div>
       </div>
     </div>
