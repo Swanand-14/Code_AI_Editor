@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { Users, Clock, AlertCircle, Wifi, WifiOff, FileText, X } from "lucide-react";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { Users, Clock, AlertCircle, Wifi, WifiOff, FileText, X, Save } from "lucide-react";
 import { toast } from "sonner";
 import { joinCollabSession } from "../actions";
 import { useCollabSocket } from "../hooks/useCollabSocket";
@@ -12,150 +12,567 @@ import { CollabEditor } from "./CollabEditor";
 import { TemplateFile } from "@prisma/client";
 import { enrichTemplateWithPaths } from "@/modules/playground/lib";
 import { TemplateFolder } from "@/modules/playground/lib/path-to-json";
-import { TemplateFileTree } from "@/modules/playground/components/playgroundExplorer";
+import { getCollabWorkspaceBySession, updateCollabWorkspace } from "../workspaces/actions";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { TemplateFileTree } from "@/modules/playground/components/playgroundExplorer";
+import { useFileExplorer } from "@/modules/playground/hooks/useFileExplorer";
+import { Button } from "@/components/ui/button";
+import { generateFileId } from "@/modules/playground/lib/index";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { useWorkspaceAutoSave } from "../hooks/useWorkspaceAutoSave";
 
 interface CollabPlaygroundProps {
   session: CollabSessionData;
 }
 
-// 🎯 SAMPLE TEMPLATE FOR TESTING
-const SAMPLE_TEMPLATE: TemplateFolder = {
-  folderName: "Root",
-  items: [
-    {
-      id: "1",
-      filename: "App",
-      fileExtension: "tsx",
-      content: `export default function App() {
-  return (
-    <div className="p-8">
-      <h1 className="text-2xl font-bold">Hello Collaboration! 🎉</h1>
-      <p>Start typing to see real-time updates...</p>
-    </div>
-  );
-}`,
-      path: "",
-    },
-    {
-      id: "2",
-      filename: "index",
-      fileExtension: "css",
-      content: `body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
-}`,
-      path: "",
-    },
-    {
-      folderName: "components",
-      items: [
-        {
-          id: "3",
-          filename: "Button",
-          fileExtension: "tsx",
-          content: `interface ButtonProps {
-  children: React.ReactNode;
-  onClick?: () => void;
-}
-
-export default function Button({ children, onClick }: ButtonProps) {
-  return (
-    <button
-      onClick={onClick}
-      className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-    >
-      {children}
-    </button>
-  );
-}`,
-          path: "components",
-        },
-        {
-          id: "4",
-          filename: "Header",
-          fileExtension: "tsx",
-          content: `export default function Header() {
-  return (
-    <header className="bg-gray-800 text-white p-4">
-      <h1 className="text-xl">My App</h1>
-    </header>
-  );
-}`,
-          path: "components",
-        },
-      ],
-    },
-    {
-      folderName: "utils",
-      items: [
-        {
-          id: "5",
-          filename: "helpers",
-          fileExtension: "ts",
-          content: `export function formatDate(date: Date): string {
-  return date.toLocaleDateString();
-}
-
-export function capitalize(str: string): string {
-  return str.charAt(0).toUpperCase() + str.slice(1);
-}`,
-          path: "utils",
-        },
-      ],
-    },
-    {
-      id: "6",
-      filename: "README",
-      fileExtension: "md",
-      content: `# Collaboration Demo
-
-This is a sample project for testing real-time collaboration.
-
-## Features
-- Real-time editing
-- Multiple users
-- WebSocket sync
-
-Try editing any file and watch it update in other windows!`,
-      path: "",
-    },
-  ],
-};
-
 export function CollabPlayground({ session }: CollabPlaygroundProps) {
   const [isJoining, setIsJoining] = useState(true);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [user, setUser] = useState<{ id: string; name: string } | null>(null);
-  const [templateData, setTemplateData] = useState<TemplateFolder | null>(null);
-  const [openFiles, setOpenFiles] = useState<Array<TemplateFile & { path?: string }>>([]);
-  const [activeFileId, setActiveFileId] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // 🔥 Use the same Zustand store as main playground
+  const {
+    templateData,
+    setTemplateData,
+    setPlaygroundId,
+    setOpenFiles,
+    setActiveFileId,
+    activeFileId,
+    closeAllFiles,
+    closeFile,
+    openFile,
+    openFiles,
+    handleAddFile,
+    handleAddFolder,
+    handleDeleteFile,
+    handleDeleteFolder,
+    handleRenameFile,
+    handleRenameFolder,
+    updateFileContent,
+  } = useFileExplorer();
 
   // Initialize WebSocket connection
-  const { isConnected, participants, emitFileOpen } = useCollabSocket(
+  const { socket, isConnected, participants, emitFileOpen, emitFileChange ,emitFileAction} = useCollabSocket(
     session.sessionId,
     user?.id,
     user?.name
   );
+  const {saveWorkSpace} = useWorkspaceAutoSave(session.sessionId,templateData,user?.id,true);
+
+  // 🔥 NEW: Listen for remote editor changes at the parent level
+  useEffect(() => {
+    if (!socket) return;
+
+     const handleRemoteEditorChange = (payload: {
+    userId: string;
+    userName: string;
+    fileId: string;
+    content: string;
+    filePath: string;
+  }) => {
+    if (payload.userId === user?.id) return;
+
+    console.log(`📡 Received remote change from ${payload.userName} for file ${payload.fileId}`);
+
+    const currentTemplate = useFileExplorer.getState().templateData;
+    if (currentTemplate) {
+      const updatedTemplate = JSON.parse(JSON.stringify(currentTemplate));
+
+      const updateFileInTree = (items: any[]): any[] => {
+        return items.map((item) => {
+          if ("folderName" in item) {
+            return {
+              ...item,
+              items: updateFileInTree(item.items),
+            };
+          } else {
+            // 🔥 FIX: Generate the ID to match
+            const itemId = generateFileId(item, currentTemplate);
+            
+            if (itemId === payload.fileId) {
+              console.log(`✅ Updated ${item.filename}.${item.fileExtension} in template`);
+              return { ...item, content: payload.content };
+            }
+            return item;
+          }
+        });
+      };
+
+      updatedTemplate.items = updateFileInTree(updatedTemplate.items);
+      setTemplateData(updatedTemplate);
+    }
+
+      // 🔥 Update open files (if the file is open)
+      const currentOpenFiles = useFileExplorer.getState().openFiles;
+      if (Array.isArray(currentOpenFiles)) {
+        const fileIsOpen = currentOpenFiles.some((f) => f.id === payload.fileId);
+        
+        if (fileIsOpen) {
+          console.log(`📝 Updating open file: ${payload.fileId}`);
+          const updatedOpenFiles = currentOpenFiles.map((file) => {
+            if (file.id === payload.fileId) {
+              // Only update if it's not the active file being edited
+              // (active file updates are handled by CollabEditor)
+              if (file.id !== activeFileId) {
+                return {
+                  ...file,
+                  content: payload.content,
+                  originalContent: payload.content,
+                  hasUnsavedChanges: false,
+                };
+              }
+            }
+            return file;
+          });
+          setOpenFiles(updatedOpenFiles);
+        }
+      }
+    };
+
+    socket.on("editor:change", handleRemoteEditorChange);
+
+    return () => {
+      socket.off("editor:change", handleRemoteEditorChange);
+    };
+  }, [socket, user?.id, setTemplateData, setOpenFiles, activeFileId]);
 
   useEffect(() => {
+    if (!socket) return;
+
+    const handleRemoteFileAction = async (payload: {
+      userId: string;
+      userName: string;
+      action: "create" | "delete" | "rename";
+      filePath: string;
+      newPath?: string;
+      content?: string;
+      isFolder?: boolean;
+    }) => {
+      // Skip if it's from current user
+      if (payload.userId === user?.id) return;
+
+      console.log(`🔧 Received file action from ${payload.userName}:`, payload.action, payload.filePath);
+
+      // Reload the workspace from database to get the latest state
+      try {
+        const workspace = await getCollabWorkspaceBySession(session.sessionId);
+        if (workspace && workspace.templateData) {
+          const enrichedTemplate = enrichTemplateWithPaths(workspace.templateData);
+          setTemplateData(enrichedTemplate);
+
+          // Show notification to user
+          const fileName = payload.filePath.split('/').pop();
+          switch (payload.action) {
+            case "create":
+              toast.info(`${payload.userName} ${payload.isFolder ? 'created folder' : 'created file'}: ${fileName}`);
+              break;
+            case "delete":
+              toast.info(`${payload.userName} ${payload.isFolder ? 'deleted folder' : 'deleted file'}: ${fileName}`);
+              
+              // 🔥 Close the file if it's currently open
+              const currentOpenFiles = useFileExplorer.getState().openFiles;
+              const fileToClose = currentOpenFiles.find((f) => 
+                `${f.path}/${f.filename}.${f.fileExtension}`.replace(/^\//, '') === payload.filePath
+              );
+              if (fileToClose) {
+                closeFile(fileToClose.id);
+              }
+              break;
+            case "rename":
+              toast.info(`${payload.userName} renamed: ${fileName} → ${payload.newPath?.split('/').pop()}`);
+              break;
+          }
+
+          console.log("✅ Template reloaded after file operation");
+        }
+      } catch (error) {
+        console.error("❌ Error reloading workspace after file action:", error);
+      }
+    };
+
+    socket.on("file:action", handleRemoteFileAction);
+
+    return () => {
+      socket.off("file:action", handleRemoteFileAction);
+    };
+  }, [socket, user?.id, session.sessionId, setTemplateData, closeFile]);
+
+  // 🔥 Save function similar to main playground
+  const saveCollabWorkspace = useCallback(
+    async (updatedTemplate: TemplateFolder) => {
+      try {
+        setIsSaving(true);
+        const result = await updateCollabWorkspace({
+          sessionId: session.sessionId,
+          templateData: updatedTemplate,
+          userId: user?.id,
+        });
+
+        if (!result.success) {
+          throw new Error(result.error || "Failed to save");
+        }
+
+        console.log("✅ Collab workspace saved");
+        return updatedTemplate;
+      } catch (error) {
+        console.error("❌ Save error:", error);
+        toast.error("Failed to save changes");
+        return null;
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [session.sessionId, user?.id]
+  );
+
+  // 🔥 Wrapped handlers (same pattern as main playground)
+  const wrappedHandleAddFile = useCallback(
+    async (newFile: TemplateFile, parentPath: string) => {
+      const result = await handleAddFile(
+        newFile,
+        parentPath,
+        async () => {},
+        null,
+        saveCollabWorkspace
+      );
+
+      // 🔥 Emit file creation to other participants
+      const filePath = parentPath
+        ? `${parentPath}/${newFile.filename}.${newFile.fileExtension}`
+        : `${newFile.filename}.${newFile.fileExtension}`;
+      
+      emitFileAction({
+        action: "create",
+        filePath,
+        content: newFile.content || "",
+      });
+
+      console.log(`📤 Emitted file creation: ${filePath}`);
+      
+      return result;
+    },
+    [handleAddFile, saveCollabWorkspace, emitFileAction]
+  );
+  
+  const wrappedHandleAddFolder = useCallback(
+    async (newFolder: TemplateFolder, parentPath: string) => {
+      const result = await handleAddFolder(
+        newFolder,
+        parentPath,
+        null,
+        saveCollabWorkspace
+      );
+
+      // 🔥 Emit folder creation to other participants
+      const folderPath = parentPath
+        ? `${parentPath}/${newFolder.folderName}`
+        : newFolder.folderName;
+      
+      emitFileAction({
+        action: "create",
+        filePath: folderPath,
+        content: "",
+      });
+
+      console.log(`📤 Emitted folder creation: ${folderPath}`);
+      
+      return result;
+    },
+    [handleAddFolder, saveCollabWorkspace, emitFileAction]
+  );
+   const wrappedHandleDeleteFile = useCallback(
+    async (file: TemplateFile, parentPath: string) => {
+      const result = await handleDeleteFile(file, parentPath, saveCollabWorkspace);
+      
+      // 🔥 Emit file deletion to other participants
+      const filePath = parentPath
+        ? `${parentPath}/${file.filename}.${file.fileExtension}`
+        : `${file.filename}.${file.fileExtension}`;
+      
+      emitFileAction({
+        action: "delete",
+        filePath,
+      });
+
+      console.log(`📤 Emitted file deletion: ${filePath}`);
+      
+      return result;
+    },
+    [handleDeleteFile, saveCollabWorkspace, emitFileAction]
+  );
+
+  const wrappedHandleDeleteFolder = useCallback(
+    async (folder: TemplateFolder, parentPath: string) => {
+      const result = await handleDeleteFolder(folder, parentPath, saveCollabWorkspace);
+
+      // 🔥 Emit folder deletion to other participants
+      const folderPath = parentPath
+        ? `${parentPath}/${folder.folderName}`
+        : folder.folderName;
+      
+      emitFileAction({
+        action: "delete",
+        filePath: folderPath,
+      });
+
+      console.log(`📤 Emitted folder deletion: ${folderPath}`);
+      
+      return result;
+    },
+    [handleDeleteFolder, saveCollabWorkspace, emitFileAction]
+  );
+
+
+  const wrappedHandleRenameFile = useCallback(
+    async (
+      file: TemplateFile,
+      newFilename: string,
+      newExtension: string,
+      parentPath: string
+    ) => {
+      const oldPath = parentPath
+        ? `${parentPath}/${file.filename}.${file.fileExtension}`
+        : `${file.filename}.${file.fileExtension}`;
+      
+      const newPath = parentPath
+        ? `${parentPath}/${newFilename}.${newExtension}`
+        : `${newFilename}.${newExtension}`;
+
+      const result = await handleRenameFile(
+        file,
+        newFilename,
+        newExtension,
+        parentPath,
+        saveCollabWorkspace
+      );
+
+      // 🔥 Emit file rename to other participants
+      emitFileAction({
+        action: "rename",
+        filePath: oldPath,
+        newPath: newPath,
+      });
+
+      console.log(`📤 Emitted file rename: ${oldPath} → ${newPath}`);
+      
+      return result;
+    },
+    [handleRenameFile, saveCollabWorkspace, emitFileAction]
+  );
+
+
+  const wrappedHandleRenameFolder = useCallback(
+    async (folder: TemplateFolder, newFolderName: string, parentPath: string) => {
+      const oldPath = parentPath
+        ? `${parentPath}/${folder.folderName}`
+        : folder.folderName;
+      
+      const newPath = parentPath
+        ? `${parentPath}/${newFolderName}`
+        : newFolderName;
+
+      const result = await handleRenameFolder(
+        folder,
+        newFolderName,
+        parentPath,
+        saveCollabWorkspace
+      );
+
+      // 🔥 Emit folder rename to other participants
+      emitFileAction({
+        action: "rename",
+        filePath: oldPath,
+        newPath: newPath,
+      });
+
+      console.log(`📤 Emitted folder rename: ${oldPath} → ${newPath}`);
+      
+      return result;
+    },
+    [handleRenameFolder, saveCollabWorkspace, emitFileAction]
+  );
+
+
+
+
+  // 🔥 File selection handler
+  const handleFileSelect = useCallback(
+    (file: TemplateFile & { path?: string }) => {
+      console.log("📄 File selected:", file);
+
+      openFile(file);
+
+      const filePath = `${file.path || ""}/${file.filename}.${file.fileExtension}`.replace(
+        /^\//, ""
+      );
+      emitFileOpen(file.id, filePath);
+    },
+    [openFile, emitFileOpen]
+  );
+
+  // 🔥 Content change handler - Now syncs with socket
+  const handleFileContentChange = useCallback(
+    (fileId: string, newContent: string) => {
+      console.log("✏️ Content changed for file:", fileId);
+
+      // Update local Zustand state
+      updateFileContent(fileId, newContent);
+
+      // 🔥 CRITICAL: Also update the template data immediately
+      const currentTemplate = useFileExplorer.getState().templateData;
+      if (currentTemplate) {
+        const updatedTemplate = JSON.parse(JSON.stringify(currentTemplate));
+
+        const updateFileInTree = (items: any[]): any[] => {
+          return items.map((item) => {
+            if ("folderName" in item) {
+              return {
+                ...item,
+                items: updateFileInTree(item.items),
+              };
+            } else {
+              const itemid = generateFileId(item,currentTemplate)
+              if (itemid === fileId) {
+                return { ...item, content: newContent };
+              }
+              return item;
+            }
+          });
+        };
+
+        updatedTemplate.items = updateFileInTree(updatedTemplate.items);
+        setTemplateData(updatedTemplate);
+      }
+
+      // Note: Socket emission is handled by CollabEditor's emitEditorChange
+    },
+    [updateFileContent, setTemplateData]
+  );
+
+  // 🔥 Save current file
+  const handleSave = useCallback(async () => {
+    if (!activeFileId || !templateData) {
+      toast.error("No active file to save");
+      return;
+    }
+
+    const fileToSave = openFiles.find((f) => f.id === activeFileId);
+    if (!fileToSave || !fileToSave.hasUnsavedChanges) {
+      toast.info("No changes to save");
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+
+      // Template data should already be updated from handleFileContentChange
+      // Just save it to database
+      const result = await saveCollabWorkspace(templateData);
+      if (!result) {
+        throw new Error("Failed to save");
+      }
+
+      // Mark as saved in open files
+      const updatedOpenFiles = openFiles.map((f) =>
+        f.id === activeFileId
+          ? {
+              ...f,
+              originalContent: f.content,
+              hasUnsavedChanges: false,
+            }
+          : f
+      );
+      setOpenFiles(updatedOpenFiles);
+
+      toast.success(`Saved ${fileToSave.filename}.${fileToSave.fileExtension}`);
+    } catch (error) {
+      console.error("Save error:", error);
+      toast.error("Failed to save file");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [
+    activeFileId,
+    templateData,
+    openFiles,
+    saveCollabWorkspace,
+    setOpenFiles,
+  ]);
+
+  // 🔥 Save all files
+  const handleSaveAll = useCallback(async () => {
+    const unsavedFiles = openFiles.filter((f) => f.hasUnsavedChanges);
+    if (unsavedFiles.length === 0) {
+      toast.info("No unsaved changes");
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      
+      if (!templateData) return;
+
+      // Template data should already be updated from handleFileContentChange
+      // Just save it to database
+      const result = await saveCollabWorkspace(templateData);
+      if (!result) throw new Error("Failed to save");
+
+      // Mark all as saved
+      const updatedOpenFiles = openFiles.map((f) => ({
+        ...f,
+        originalContent: f.content,
+        hasUnsavedChanges: false,
+      }));
+      setOpenFiles(updatedOpenFiles);
+
+      toast.success(`Saved ${unsavedFiles.length} files`);
+    } catch (error) {
+      console.error("Save all error:", error);
+      toast.error("Failed to save files");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [openFiles, templateData, saveCollabWorkspace, setOpenFiles]);
+
+  // 🔥 Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.key === "s") {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleSaveAll();
+        } else {
+          handleSave();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleSave, handleSaveAll]);
+
+  // 🔥 Initialize
+  useEffect(() => {
+    let mounted = true;
+
     const join = async () => {
       try {
-        // Get current user
-        const currentUserData = await currentUser();
-        setUser(currentUserData ? { id: currentUserData.id!, name: currentUserData.name! } : null);
+        console.log("🚀 Starting join process for session:", session.sessionId);
 
-        // Join session
+        const currentUserData = await currentUser();
+        if (!mounted) return;
+        setUser(
+          currentUserData ? { id: currentUserData.id!, name: currentUserData.name! } : null
+        );
+
         const result = await joinCollabSession(session.sessionId);
+        if (!mounted) return;
 
         if (!result.success) {
           setJoinError(result.error || "Failed to join session");
@@ -164,34 +581,60 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
           return;
         }
 
-        // 🎯 Load sample template for testing
-        console.log("📦 Loading sample template for testing");
-        const enrichedTemplate = enrichTemplateWithPaths(SAMPLE_TEMPLATE);
-        setTemplateData(enrichedTemplate);
-        console.log("✅ Sample template loaded");
+        const workspace = await getCollabWorkspaceBySession(session.sessionId);
+        if (!mounted) return;
 
-        // Auto-open first file (App.tsx)
-        const firstFile = findFirstFile(enrichedTemplate);
-        if (firstFile) {
-          console.log("📄 Auto-opening first file:", firstFile.filename);
-          handleFileSelect(firstFile);
+        if (!workspace || !workspace.templateData) {
+          console.error("❌ No workspace/template found");
+          toast.error("No template data found");
+          setIsJoining(false);
+          return;
         }
 
-        toast.success("Successfully joined collaboration session!");
+        const enrichedTemplate = enrichTemplateWithPaths(workspace.templateData);
+        console.log("✅ Enriched template with", enrichedTemplate.items.length, "items");
+
+        setPlaygroundId(session.sessionId);
+        setTemplateData(enrichedTemplate);
+
+        const firstFile = findFirstFile(enrichedTemplate);
+        if (firstFile && mounted) {
+          console.log("📄 Auto-opening first file:", firstFile.filename);
+          setTimeout(() => {
+            if (mounted) {
+              handleFileSelect(firstFile);
+            }
+          }, 100);
+        }
+
+        if (mounted) {
+          toast.success("Successfully joined collaboration session!");
+        }
       } catch (error) {
         console.error("❌ Error joining session:", error);
-        setJoinError("An error occurred while joining");
-        toast.error("Failed to join session");
+        if (mounted) {
+          setJoinError("An error occurred while joining");
+          toast.error("Failed to join session");
+        }
       } finally {
-        setIsJoining(false);
+        if (mounted) {
+          setIsJoining(false);
+        }
       }
     };
 
     join();
-  }, [session.sessionId]);
 
-  // Helper to find first file in template
-  const findFirstFile = (folder: TemplateFolder): (TemplateFile & { path?: string }) | null => {
+    return () => {
+      mounted = false;
+      closeAllFiles();
+      setTemplateData(null);
+    };
+  }, [session.sessionId, setPlaygroundId, setTemplateData, closeAllFiles]);
+
+  const findFirstFile = (
+    folder: TemplateFolder
+  ): (TemplateFile & { path?: string }) | null => {
     for (const item of folder.items) {
       if ("folderName" in item) {
         const found = findFirstFile(item);
@@ -203,38 +646,6 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     return null;
   };
 
-  // Handle file selection
-  const handleFileSelect = useCallback((file: TemplateFile & { path?: string }) => {
-    console.log("📄 File selected:", file);
-    
-    // Add to open files if not already open
-    if (!openFiles.find((f) => f.id === file.id)) {
-      setOpenFiles((prev) => [...prev, file]);
-    }
-    
-    setActiveFileId(file.id);
-    
-    // Emit file open event
-    const filePath = `${file.path || ""}/${file.filename}.${file.fileExtension}`.replace(/^\//, "");
-    emitFileOpen(file.id, filePath);
-  }, [openFiles, emitFileOpen]);
-
-  // Close file
-  const closeFile = useCallback((fileId: string) => {
-    setOpenFiles((prev) => {
-      const filtered = prev.filter((f) => f.id !== fileId);
-      
-      // If closing active file, switch to another
-      if (activeFileId === fileId && filtered.length > 0) {
-        setActiveFileId(filtered[0].id);
-      } else if (filtered.length === 0) {
-        setActiveFileId(null);
-      }
-      
-      return filtered;
-    });
-  }, [activeFileId]);
-
   if (isJoining) {
     return (
       <div className="flex flex-col items-center justify-center h-screen p-4">
@@ -244,7 +655,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
           </h2>
           <div className="mb-8">
             <LoadingStep currentStep={1} step={1} label="Connecting to session" />
-            <LoadingStep currentStep={2} step={2} label="Loading playground" />
+            <LoadingStep currentStep={2} step={2} label="Loading template" />
             <LoadingStep currentStep={3} step={3} label="Ready to collaborate" />
           </div>
         </div>
@@ -262,7 +673,6 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     );
   }
 
-  // Calculate time remaining
   const expiresAt = new Date(session.expiresAt);
   const now = new Date();
   const hoursRemaining = Math.max(
@@ -270,9 +680,9 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60))
   );
 
-  const activeFile = openFiles.find((f) => f.id === activeFileId);
+  const activeFile = Array.isArray(openFiles) ? openFiles.find((f) => f.id === activeFileId) : undefined;
+  const hasUnsavedChanges = Array.isArray(openFiles) ? openFiles.some((f) => f.hasUnsavedChanges) : false;
 
-  // Determine language from file extension
   const getLanguage = (extension: string): string => {
     const map: Record<string, string> = {
       js: "javascript",
@@ -290,155 +700,203 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
   };
 
   return (
-    <SidebarProvider>
-      <div className="flex h-screen w-full bg-background">
-        {/* File Explorer Sidebar */}
-        {templateData && (
-          <TemplateFileTree
-            data={templateData}
-            onFileSelect={handleFileSelect}
-            selectedFile={activeFile}
-            title="Files (Demo)"
-            // Disable editing in collab mode
-            onAddFile={() => toast.info("File editing disabled in demo mode")}
-            onAddFolder={() => toast.info("File editing disabled in demo mode")}
-            onDeleteFile={() => toast.info("File editing disabled in demo mode")}
-            onDeleteFolder={() => toast.info("File editing disabled in demo mode")}
-            onRenameFile={() => toast.info("File editing disabled in demo mode")}
-            onRenameFolder={() => toast.info("File editing disabled in demo mode")}
-          />
-        )}
-
-        {/* Main Content Area */}
-        <div className="flex flex-1 flex-col">
-          {/* Collaboration Header */}
-          <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border px-4">
-            <div className="flex flex-1 items-center gap-4">
-              <div className="flex items-center gap-3">
-                <Users className="h-5 w-5 text-primary" />
-                <div>
-                  <h1 className="font-semibold">Collaboration Demo</h1>
-                  <p className="text-xs text-muted-foreground">
-                    Session: {session.sessionId}
-                  </p>
-                </div>
-              </div>
-
-              <div className="ml-auto flex items-center gap-4">
-                {/* Connection Status */}
-                <div className="flex items-center gap-2">
-                  {isConnected ? (
-                    <>
-                      <Wifi className="h-4 w-4 text-green-500" />
-                      <span className="text-sm text-green-600">Connected</span>
-                    </>
-                  ) : (
-                    <>
-                      <WifiOff className="h-4 w-4 text-red-500" />
-                      <span className="text-sm text-red-600">Disconnected</span>
-                    </>
-                  )}
-                </div>
-
-                {/* Participants */}
-                <div className="flex items-center gap-2">
-                  <Users className="h-4 w-4" />
-                  <span className="text-sm">{participants.length} online</span>
-                </div>
-
-                {/* Expiry */}
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Clock className="h-4 w-4" />
-                  <span className="text-sm">Expires in {hoursRemaining}h</span>
-                </div>
-              </div>
-            </div>
-          </header>
-
-          {/* Participants List */}
-          {participants.length > 0 && (
-            <div className="border-b bg-muted/10 px-4 py-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                {participants.map((participant) => (
-                  <div
-                    key={participant.userId}
-                    className="flex items-center gap-1 px-2 py-1 bg-background rounded text-sm border"
-                  >
-                    <div className="h-2 w-2 rounded-full bg-green-500" />
-                    <span>{participant.userName}</span>
-                    <span className="text-xs text-muted-foreground">({participant.role})</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+    <TooltipProvider>
+      <SidebarProvider>
+        <div className="flex h-screen w-full bg-background">
+          {templateData && (
+            <TemplateFileTree
+              data={templateData}
+              onFileSelect={handleFileSelect}
+              selectedFile={activeFile}
+              title="Files (Collab)"
+              onAddFile={wrappedHandleAddFile}
+              onAddFolder={wrappedHandleAddFolder}
+              onDeleteFile={wrappedHandleDeleteFile}
+              onDeleteFolder={wrappedHandleDeleteFolder}
+              onRenameFile={wrappedHandleRenameFile}
+              onRenameFolder={wrappedHandleRenameFolder}
+            />
           )}
 
-          {/* File Tabs */}
-          {openFiles.length > 0 && (
-            <div className="border-b border-border bg-muted/30">
-              <div className="flex items-center justify-between px-4 py-2">
-                <div className="flex items-center gap-1 overflow-x-auto">
-                  {openFiles.map((file) => (
-                    <div
-                      key={file.id}
-                      onClick={() => setActiveFileId(file.id)}
-                      className={`flex items-center gap-2 px-3 py-1 rounded-t-md cursor-pointer border-b-2 transition-all ${
-                        activeFileId === file.id
-                          ? "border-primary bg-background"
-                          : "border-transparent hover:bg-muted"
-                      }`}
-                    >
-                      <FileText className="h-3 w-3" />
-                      <span className="text-sm">
-                        {file.filename}.{file.fileExtension}
-                      </span>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          closeFile(file.id);
-                        }}
-                        className="ml-1 hover:bg-destructive hover:text-white rounded p-0.5"
+          <div className="flex flex-1 flex-col">
+            <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border px-4">
+              <div className="flex flex-1 items-center gap-4">
+                <div className="flex items-center gap-3">
+                  <Users className="h-5 w-5 text-primary" />
+                  <div>
+                    <h1 className="font-semibold">Collaboration Session</h1>
+                    <p className="text-xs text-muted-foreground">
+                      {openFiles.length} file{openFiles.length !== 1 ? "s" : ""} open
+                      {hasUnsavedChanges && " • Unsaved changes"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="ml-auto flex items-center gap-4">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleSave}
+                        disabled={!activeFile?.hasUnsavedChanges || isSaving}
+                        aria-label="Save current file"
                       >
-                        <X className="h-3 w-3" />
-                      </button>
+                        <Save className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Save (Ctrl+S)</TooltipContent>
+                  </Tooltip>
+
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleSaveAll}
+                        disabled={!hasUnsavedChanges || isSaving}
+                        aria-label="Save all files"
+                      >
+                        <Save className="h-4 w-4" />
+                        <span className="ml-1 text-xs">All</span>
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>Save All (Ctrl+Shift+S)</TooltipContent>
+                  </Tooltip>
+
+                  <div className="flex items-center gap-2">
+                    {isConnected ? (
+                      <>
+                        <Wifi className="h-4 w-4 text-green-500" />
+                        <span className="text-sm text-green-600">Connected</span>
+                      </>
+                    ) : (
+                      <>
+                        <WifiOff className="h-4 w-4 text-red-500" />
+                        <span className="text-sm text-red-600">Disconnected</span>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Users className="h-4 w-4" />
+                    <span className="text-sm">{participants.length} online</span>
+                  </div>
+
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Clock className="h-4 w-4" />
+                    <span className="text-sm">Expires in {hoursRemaining}h</span>
+                  </div>
+                </div>
+              </div>
+            </header>
+
+            {participants.length > 0 && (
+              <div className="border-b bg-muted/10 px-4 py-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {participants.map((participant, index) => (
+                    <div
+                      key={`${participant.userId}-${index}`}
+                      className="flex items-center gap-1 px-2 py-1 bg-background rounded text-sm border"
+                    >
+                      <div className="h-2 w-2 rounded-full bg-green-500" />
+                      <span>{participant.userName}</span>
+                      <span className="text-xs text-muted-foreground">
+                        ({participant.role})
+                      </span>
                     </div>
                   ))}
                 </div>
-                {openFiles.length > 1 && (
-                  <button
-                    onClick={() => {
-                      setOpenFiles([]);
-                      setActiveFileId(null);
-                    }}
-                    className="text-xs text-muted-foreground hover:text-foreground"
-                  >
-                    Close All
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Editor Area */}
-          <div className="flex-1 overflow-hidden">
-            {activeFile ? (
-              <CollabEditor
-                sessionId={session.sessionId}
-                userId={user?.id}
-                userName={user?.name || "Anonymous"}
-                fileId={activeFile.id}
-                filePath={`${activeFile.path || ""}/${activeFile.filename}.${activeFile.fileExtension}`.replace(/^\//, "")}
-                initialContent={typeof activeFile.content === "string" ? activeFile.content : ""}
-                language={getLanguage(activeFile.fileExtension || "")}
-              />
-            ) : (
-              <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                No files open. Select a file from the sidebar.
               </div>
             )}
+
+            {openFiles.length > 0 && (
+              <div className="border-b border-border bg-muted/30">
+                <div className="flex items-center justify-between px-4 py-2">
+                  <div className="flex items-center gap-1 overflow-x-auto">
+                    {openFiles.map((file) => {
+                      const isDuplicate = openFiles.some(
+                        (f) =>
+                          f.filename === file.filename &&
+                          f.fileExtension === file.fileExtension &&
+                          f.id !== file.id
+                      );
+                      const displayName =
+                        isDuplicate && file.path
+                          ? `${file.path}/${file.filename}.${file.fileExtension}`
+                          : `${file.filename}.${file.fileExtension}`;
+
+                      return (
+                        <div
+                          key={file.id}
+                          onClick={() => setActiveFileId(file.id)}
+                          className={`flex items-center gap-2 px-3 py-1 rounded-t-md cursor-pointer border-b-2 transition-all ${
+                            activeFileId === file.id
+                              ? "border-primary bg-background"
+                              : "border-transparent hover:bg-muted"
+                          }`}
+                        >
+                          <FileText className="h-3 w-3" />
+                          <span className="text-sm" title={displayName}>
+                            {displayName}
+                          </span>
+                          {file.hasUnsavedChanges && (
+                            <span className="h-2 w-2 rounded-full bg-orange-500" />
+                          )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              closeFile(file.id);
+                            }}
+                            className="ml-1 hover:bg-destructive hover:text-white rounded p-0.5"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {openFiles.length > 1 && (
+                    <button
+                      onClick={closeAllFiles}
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      Close All
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-hidden">
+              {activeFile ? (
+                <CollabEditor
+                  sessionId={session.sessionId}
+                  userId={user?.id}
+                  userName={user?.name || "Anonymous"}
+                  fileId={activeFile.id}
+                  filePath={`${activeFile.path || ""}/${activeFile.filename}.${
+                    activeFile.fileExtension
+                  }`.replace(/^\//, "")}
+                  initialContent={
+                    typeof activeFile.content === "string" ? activeFile.content : ""
+                  }
+                  language={getLanguage(activeFile.fileExtension || "")}
+                  onContentChange={(content) =>
+                    handleFileContentChange(activeFile.id, content)
+                  }
+                />
+              ) : (
+                <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                  {templateData
+                    ? "No files open. Select a file from the sidebar."
+                    : "Loading template..."}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>
-    </SidebarProvider>
+      </SidebarProvider>
+    </TooltipProvider>
   );
 }

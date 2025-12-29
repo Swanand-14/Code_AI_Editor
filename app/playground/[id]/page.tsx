@@ -622,8 +622,11 @@ useEffect(() => {
       </Button>
     </TooltipTrigger>
     <TooltipContent>Create GitHub Repository</TooltipContent>
-  </Tooltip>
-                <StartCollabButton playgroundId={id} playgroundName={playgroundData?.name} />
+  </Tooltip><div className="text-xs bg-yellow-100 p-2 rounded">
+  Template loaded: {templateData ? "✅" : "❌"} 
+  {templateData && ` | Items: ${templateData.items?.length || 0}`}
+</div>
+                <StartCollabButton playgroundId={id} playgroundName={playgroundData?.name} templateData={templateData} />
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
