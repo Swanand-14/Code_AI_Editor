@@ -1,5 +1,4 @@
 "use client";
-"use client";
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -13,74 +12,96 @@ import {
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import type { CollabSessionResponse } from "../types";
+import { createCollabWorkspace } from "../workspaces/actions";
 
 interface StartCollabButtonProps {
   playgroundId: string;
   playgroundName?: string;
+  templateData?: any;
 }
 
-export function StartCollabButton({playgroundId,playgroundName}:StartCollabButtonProps){
-    const [isOpen,setIsOpen] = useState(false);
-    const [isLoading,setIsLoading] = useState(false)
-    const [shareUrl,setShareUrl] = useState<string>("");
-    const [isCopied,setIsCopied] = useState(false);
+export function StartCollabButton({
+  playgroundId,
+  playgroundName,
+  templateData,
+}: StartCollabButtonProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string>("");
+  const [isCopied, setIsCopied] = useState(false);
 
-    const handleStartCollab = async() => {
-        setIsLoading(true);
-        try {
-            const response = await fetch("/api/collab/session",
-                {
-                    method:"POST",
-                    headers:{"Content-Type":"application/json"},
-                    body:JSON.stringify({
-                        projectType:"starter",
-                        playgroundId
-                    })
-                }
-            )
-            const data:CollabSessionResponse = await response.json()
-            if(!data.success){
-                toast.error(data.error || "Failed to create collaboration session")
-                return;
-            }
-            setShareUrl(data.shareUrl!);
-            setIsOpen(true);
-            toast.success("Collaboration session created!");
+  const handleStartCollab = async () => {
+    setIsLoading(true);
+    try {
+      console.log("🚀 Starting collaboration for playground:", playgroundId);
 
-        } catch (error) {
-            console.error("Error starting collaboration:",error)
-            toast.error("Failed to start collaboration")
+      if (!templateData || !templateData.items || templateData.items.length === 0) {
+        toast.error("Template data not loaded yet. Please wait and try again.");
+        return;
+      }
 
-        }finally{
-            setIsLoading(false)
-        }
+      // 1. Create CollabSession
+      const sessionResponse = await fetch("/api/collab/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectType: "starter",
+          playgroundId,
+        }),
+      });
+
+      const sessionData: CollabSessionResponse = await sessionResponse.json();
+
+      if (!sessionData.success) {
+        toast.error(sessionData.error || "Failed to create session");
+        return;
+      }
+
+      console.log("✅ Session created:", sessionData.sessionId);
+
+      // 2. Create workspace with template - SIMPLE like TemplateFile
+      const workspaceResult = await createCollabWorkspace({
+        sessionId: sessionData.sessionId!,
+        name: playgroundName || "Untitled Workspace",
+        templateData: templateData, // 🔥 Just pass the whole template
+      });
+
+      if (!workspaceResult.success) {
+        toast.error(workspaceResult.error || "Failed to create workspace");
+        return;
+      }
+
+      console.log("✅ Workspace created:", workspaceResult.workSpaceId);
+
+      setShareUrl(sessionData.shareUrl!);
+      setIsOpen(true);
+      toast.success("Collaboration session created!");
+    } catch (error) {
+      console.error("❌ Error:", error);
+      toast.error("Failed to start collaboration");
+    } finally {
+      setIsLoading(false);
     }
+  };
 
-    const handleCopyUrl = async() => {
-        try {
-            await navigator.clipboard.writeText(shareUrl);
-            setIsCopied(true);
-            toast.success("Link copied to clipboard");
-            setTimeout(()=>setIsCopied(false),2000)
-
-        } catch (error) {
-            toast.error("Failed to copy Link")
-            
-        }
+  const handleCopyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setIsCopied(true);
+      toast.success("Link copied!");
+      setTimeout(() => setIsCopied(false), 2000);
+    } catch (error) {
+      toast.error("Failed to copy link");
     }
+  };
 
-    const handleOpenInNewTab = () => {
-        window.open(shareUrl,"_blank");
-    };
-
-     return (
+  return (
     <>
       <Button
         size="sm"
         variant="outline"
         onClick={handleStartCollab}
-        disabled={isLoading}
-        aria-label="Start collaboration"
+        disabled={isLoading || !templateData}
       >
         <Users className="h-4 w-4 mr-2" />
         {isLoading ? "Creating..." : "Start Collaboration"}
@@ -91,8 +112,7 @@ export function StartCollabButton({playgroundId,playgroundName}:StartCollabButto
           <DialogHeader>
             <DialogTitle>Collaboration Session Created</DialogTitle>
             <DialogDescription>
-              Share this link with others to collaborate on{" "}
-              {playgroundName || "this playground"}
+              Share this link to collaborate on {playgroundName || "this playground"}
             </DialogDescription>
           </DialogHeader>
 
@@ -104,17 +124,8 @@ export function StartCollabButton({playgroundId,playgroundName}:StartCollabButto
                 readOnly
                 className="flex-1 px-3 py-2 border rounded-md bg-muted text-sm"
               />
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handleCopyUrl}
-                className="shrink-0"
-              >
-                {isCopied ? (
-                  <Check className="h-4 w-4" />
-                ) : (
-                  <Copy className="h-4 w-4" />
-                )}
+              <Button size="sm" variant="outline" onClick={handleCopyUrl}>
+                {isCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               </Button>
             </div>
 
@@ -122,24 +133,19 @@ export function StartCollabButton({playgroundId,playgroundName}:StartCollabButto
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleOpenInNewTab}
+                onClick={() => window.open(shareUrl, "_blank")}
                 className="flex-1"
               >
                 <ExternalLink className="h-4 w-4 mr-2" />
-                Open in New Tab
+                Open
               </Button>
-              <Button
-                variant="default"
-                size="sm"
-                onClick={() => setIsOpen(false)}
-                className="flex-1"
-              >
+              <Button variant="default" size="sm" onClick={() => setIsOpen(false)} className="flex-1">
                 Done
               </Button>
             </div>
 
             <p className="text-xs text-muted-foreground text-center">
-              This session will expire in 24 hours
+              Session expires in 24 hours
             </p>
           </div>
         </DialogContent>

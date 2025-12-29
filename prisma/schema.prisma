@@ -80,6 +80,8 @@ model User {
   githubRepositories GitHubRepository[]
   hostedSessions CollabSession[] @relation("HostedSessions")
   collabParticipations CollabParticipant[] @relation("CollabParticipants")
+  ownedWorkspaces CollabWorkspace[] @relation("OwnedWorkspaces")
+
   
 
   @@map("users")
@@ -190,4 +192,37 @@ model CollabParticipant {
   @@unique([sessionId, userId])
   @@map("collab_participants")
   @@index([sessionId])
+}
+
+model CollabWorkspace {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  
+  // Identification
+  name        String   // User-friendly name
+  sessionId   String   @unique // Links to CollabSession
+  
+  // File storage
+  templateData Json  
+  
+  // Template reference
+  originalTemplateId   String?  // For optional reset/comparison
+  originalTemplateName String?  // e.g., "NEXTJS", "REACT"
+  
+  // Ownership
+  ownerId     String   @db.ObjectId
+  owner       User     @relation("OwnedWorkspaces", fields: [ownerId], references: [id], onDelete: Cascade)
+  
+  // Metadata
+  lastSavedBy String?  // User ID who made last edit
+  lastSavedAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Stats
+  fileCount   Int      @default(0)
+  totalSize   Int      @default(0) // in bytes
+  
+  @@map("collab_workspaces")
+  @@index([ownerId])
+  
 }

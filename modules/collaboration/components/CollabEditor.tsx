@@ -17,14 +17,33 @@ interface CollabEditorProps {
   onContentChange?: (content: string) => void;
 }
 
-export function CollabEditor({sessionId,userId,userName,fileId,filePath,initialContent,language,onContentChange}:CollabEditorProps) {
-    const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
-    const monacoRef = useRef<Monaco | null>(null);
-    const [content, setContent] = useState<string>(initialContent);
-    const isRemoteChange = useRef<boolean>(false);
-    const cursorUpdateTimeout = useRef<NodeJS.Timeout | null>(null);
-    const { socket, isConnected,emitCursorMove,emitEditorChange } = useCollabSocket(sessionId, userId, userName);
-     const handleEditorDidMount = useCallback(
+export function CollabEditor({
+  sessionId,
+  userId,
+  userName,
+  fileId,
+  filePath,
+  initialContent,
+  language,
+  onContentChange,
+}: CollabEditorProps) {
+  const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<Monaco | null>(null);
+  const [content, setContent] = useState<string>(initialContent);
+  const isRemoteChange = useRef<boolean>(false);
+  const cursorUpdateTimeout = useRef<NodeJS.Timeout | null>(null);
+  const previousFileId = useRef<string>(fileId);
+  
+  // 🔥 FIX: Track if this is the initial mount
+  const isInitialMount = useRef<boolean>(true);
+
+  const { socket, isConnected, emitCursorMove, emitEditorChange } = useCollabSocket(
+    sessionId,
+    userId,
+    userName
+  );
+
+  const handleEditorDidMount = useCallback(
     (editor: editor.IStandaloneCodeEditor, monaco: Monaco) => {
       editorRef.current = editor;
       monacoRef.current = monaco;
@@ -79,7 +98,7 @@ export function CollabEditor({sessionId,userId,userName,fileId,filePath,initialC
             fileId,
             filePath,
             content: newContent,
-            changes: [], // We'll send full content for simplicity
+            changes: [],
             timestamp: Date.now(),
           });
         }
@@ -88,66 +107,94 @@ export function CollabEditor({sessionId,userId,userName,fileId,filePath,initialC
     [fileId, filePath, emitEditorChange, onContentChange]
   );
 
-  useEffect(()=>{
-     if(!socket)return;
-     const handleRemoteChange = (payload:{
-        userId:string;userName:string;fileId:string;content:string
-     })=>{
-        if(payload.fileId === fileId && payload.userId!==userId){
-            console.log(`Remote Change from ${payload.userName} on ${payload.fileId}`)
-            isRemoteChange.current = true;
-            const editor =editorRef.current ;
-            if(editor){
-                const currentPosition = editor.getPosition()
-                const currentScrollTop = editor.getScrollTop();
-                setContent(payload.content);
-                editor.setValue(payload.content)
-                if(currentPosition){
-                    editor.setPosition(currentPosition)
+  // 🔥 FIX: Listen for remote changes
+  useEffect(() => {
+    if (!socket) return;
 
-                }
-                editor.setScrollTop(currentScrollTop)
-            }
-            setTimeout(()=>{
-                isRemoteChange.current = false;
-
-            },50)
+    const handleRemoteChange = (payload: {
+      userId: string;
+      userName: string;
+      fileId: string;
+      content: string;
+    }) => {
+      // Only apply if it's for this file and from another user
+      if (payload.fileId === fileId && payload.userId !== userId) {
+        console.log(`📝 Remote change from ${payload.userName} on ${payload.fileId}`);
+        
+        isRemoteChange.current = true;
+        const editor = editorRef.current;
+        
+        if (editor) {
+          const currentPosition = editor.getPosition();
+          const currentScrollTop = editor.getScrollTop();
+          
+          // Update content
+          setContent(payload.content);
+          editor.setValue(payload.content);
+          
+          // Restore cursor and scroll position
+          if (currentPosition) {
+            editor.setPosition(currentPosition);
+          }
+          editor.setScrollTop(currentScrollTop);
         }
-     }
+        
+        setTimeout(() => {
+          isRemoteChange.current = false;
+        }, 50);
+      }
+    };
 
-     const handleRemoteCursor = (payload:{
-        userId:string,userName:string,fileId:string,position:{lineNumber:number;column:number}
-     }) => {
-        if(payload.fileId === fileId && payload.userId!==userId){
-            console.log(`Remote cursor from ${payload.userName} on file ${fileId}`)
-            //Todo - render cursor decoration
-        }
-     }
+    const handleRemoteCursor = (payload: {
+      userId: string;
+      userName: string;
+      fileId: string;
+      position: { lineNumber: number; column: number };
+    }) => {
+      if (payload.fileId === fileId && payload.userId !== userId) {
+        console.log(`👆 Remote cursor from ${payload.userName} on file ${fileId}`);
+        // TODO - render cursor decoration
+      }
+    };
 
-     socket.on("editor:change",handleRemoteChange);
-     socket.on("cursor:move",handleRemoteCursor);
+    socket.on("editor:change", handleRemoteChange);
+    socket.on("cursor:move", handleRemoteCursor);
 
-     return ()=>{
-        socket.off("editor:change",handleRemoteChange)
-        socket.off("cursor:move",handleRemoteCursor)
-     }
+    return () => {
+      socket.off("editor:change", handleRemoteChange);
+      socket.off("cursor:move", handleRemoteCursor);
+    };
+  }, [socket, fileId, userId]);
 
-
-
-     
-  },[socket,fileId,userId])
-
-   useEffect(() => {
-    setContent(initialContent);
-    if (editorRef.current) {
-      isRemoteChange.current = true;
-      editorRef.current.setValue(initialContent);
-      setTimeout(() => {
-        isRemoteChange.current = false;
-      }, 50);
+  // 🔥 FIX: Only update editor when switching files, NOT on every content change
+  useEffect(() => {
+    // Check if the file has actually changed
+    const fileChanged = previousFileId.current !== fileId;
+    
+    if (fileChanged || isInitialMount.current) {
+      console.log(`📂 Switching to file: ${fileId}`);
+      
+      // Update content
+      setContent(initialContent);
+      
+      if (editorRef.current) {
+        isRemoteChange.current = true;
+        editorRef.current.setValue(initialContent);
+        
+        // Reset cursor to start when switching files
+        editorRef.current.setPosition({ lineNumber: 1, column: 1 });
+        
+        setTimeout(() => {
+          isRemoteChange.current = false;
+        }, 50);
+      }
+      
+      // Update refs
+      previousFileId.current = fileId;
+      isInitialMount.current = false;
     }
-  }, [fileId, initialContent]);
-
+    // ❌ DON'T update on initialContent changes - that causes cursor jumps!
+  }, [fileId]); // ✅ Only depend on fileId, NOT initialContent
 
   return (
     <div className="relative h-full w-full">

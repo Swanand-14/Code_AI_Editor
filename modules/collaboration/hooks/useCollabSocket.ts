@@ -130,6 +130,9 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
   const emitFileAction = (payload: Omit<FileActionPayload, "userId" | "userName" | "sessionId">) => {
     socket?.emit("file:action", { ...payload, sessionId, userId, userName });
   };
+  const emitFileChange = (fileId: string, content: string, action: 'update' | 'delete') => {
+    socket.emit('file:change', { fileId, content, action });
+  };
 
   const emitFileOpen = (fileId: string, filePath: string) => {
     socket?.emit("file:open", { fileId, filePath });
@@ -148,5 +151,6 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
     emitFileAction,
     emitFileOpen,
     emitPresenceUpdate,
+    emitFileChange
   };
 }
