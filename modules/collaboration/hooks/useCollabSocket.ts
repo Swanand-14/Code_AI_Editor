@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState,useCallback } from "react";
 import { Socket, io } from "socket.io-client";
 
 // Import types from server
@@ -142,6 +142,19 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
     socket?.emit("presence:update", { status, activeFile });
   };
 
+  const emitWebContainerCommand = useCallback(
+    (command: "start" | "stop" | "restart") => {
+      socket?.emit("webcontainer:command", {
+        sessionId,
+        userId,
+        userName,
+        command,
+        timestamp: Date.now(),
+      });
+    },
+    [socket, sessionId, userId, userName]
+  );
+
   return {
     socket,
     isConnected,
@@ -151,6 +164,6 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
     emitFileAction,
     emitFileOpen,
     emitPresenceUpdate,
-    emitFileChange
+    emitFileChange,emitWebContainerCommand
   };
 }

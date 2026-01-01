@@ -12,6 +12,7 @@ interface UseWebContainerProps {
   autoStart?: boolean;
   projectId?: string;
   terminalRef?: React.RefObject<any>;
+  skipInit?: boolean;
 }
 
 interface UseWebContainerReturn {
@@ -33,8 +34,9 @@ const BASE_TEMPLATES: Record<string, string> = {
 export const useWebContainer = ({
   templateData,
   autoStart = true,
-  projectId,terminalRef
+  projectId,terminalRef,skipInit = false
 }: UseWebContainerProps): UseWebContainerReturn => {
+  
   const [serverUrl, setServerUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -50,8 +52,11 @@ export const useWebContainer = ({
     }
   },[terminalRef])
 
+  
+
   // Initialize WebContainer instance (once)
   useEffect(() => {
+    if(skipInit)return;
     let mounted = true;
 
     async function initialize() {
@@ -78,10 +83,11 @@ export const useWebContainer = ({
     return () => {
       mounted = false;
     };
-  }, [writeToTerminal]);
+  }, [writeToTerminal,skipInit]);
 
   // Setup server listener (once only)
   useEffect(() => {
+    if(skipInit)return;
     const handleServerReady = ({ url }: { port: number; url: string }) => {
       console.log("🎯 Server ready:", url);
       setServerUrl(url);
@@ -94,9 +100,10 @@ export const useWebContainer = ({
     return () => {
       webContainerService.off("server-ready", handleServerReady);
     };
-  }, [writeToTerminal]);
+  }, [writeToTerminal,skipInit]);
 
   const detectTemplateType = useCallback((packageJsonContent: string): string | null => {
+    if(skipInit)return null;
     try {
       const pkg = JSON.parse(packageJsonContent);
       const deps = { ...pkg.dependencies, ...pkg.devDependencies };
@@ -118,7 +125,7 @@ export const useWebContainer = ({
       console.error('Error detecting template type:', error);
       return null;
     }
-  }, []);
+  }, [skipInit]);
 
   const installFromTarball = useCallback(async (
     instance: any,
@@ -327,6 +334,7 @@ export const useWebContainer = ({
 
   // Handle project switching and mounting
   useEffect(() => {
+    if(skipInit)return;
     if (!instance || !templateData || !projectId) return;
 
     async function setupProject() {
@@ -452,7 +460,7 @@ export const useWebContainer = ({
     }
 
     setupProject();
-  }, [instance, templateData, projectId, autoStart, needsDependencyInstall, getPackageJsonHash, detectTemplateType, installFromTarball]);
+  }, [instance, templateData, projectId, autoStart, needsDependencyInstall, getPackageJsonHash, detectTemplateType, installFromTarball,skipInit]);
 
   const writeFileSync = useCallback(
     async (path: string, content: string): Promise<void> => {
