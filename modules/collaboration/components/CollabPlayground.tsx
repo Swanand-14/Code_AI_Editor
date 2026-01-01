@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Users, Clock, AlertCircle, Wifi, WifiOff, FileText, X, Save } from "lucide-react";
+import { Users, Clock, AlertCircle, Wifi, WifiOff, FileText, X, Save, Play, Square, RotateCcw } from "lucide-react"; // 🔥 Added Play, Square, RotateCcw
 import { toast } from "sonner";
 import { joinCollabSession } from "../actions";
 import { useCollabSocket } from "../hooks/useCollabSocket";
@@ -26,6 +26,12 @@ import {
 } from "@/components/ui/tooltip";
 import { useWorkspaceAutoSave } from "../hooks/useWorkspaceAutoSave";
 
+// 🔥 NEW: Import WebContainer components
+import { useCollabWebContainer } from "@/modules/webContainers/hooks/useCollabWebContainer";
+import { WebContainerPreview } from "@/modules/webContainers/components/WebContainerPreview";
+import { HostOfflineBanner } from "./HostOfflineBanner";
+import TerminalComponent, { TerminalRef } from "@/modules/webContainers/components/terminal";
+
 interface CollabPlaygroundProps {
   session: CollabSessionData;
 }
@@ -35,6 +41,12 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
   const [joinError, setJoinError] = useState<string | null>(null);
   const [user, setUser] = useState<{ id: string; name: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  
+  // 🔥 NEW: Preview toggle state
+  const [showPreview, setShowPreview] = useState(false);
+  
+  // 🔥 NEW: Terminal ref for WebContainer
+  const terminalRef = useRef<TerminalRef>(null);
 
   // 🔥 Use the same Zustand store as main playground
   const {
@@ -58,61 +70,74 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
   } = useFileExplorer();
 
   // Initialize WebSocket connection
-  const { socket, isConnected, participants, emitFileOpen, emitFileChange ,emitFileAction} = useCollabSocket(
+  const { socket, isConnected, participants, emitFileOpen, emitFileChange, emitFileAction } = useCollabSocket(
     session.sessionId,
     user?.id,
     user?.name
   );
-  const {saveWorkSpace} = useWorkspaceAutoSave(session.sessionId,templateData,user?.id,true);
+  const { saveWorkSpace } = useWorkspaceAutoSave(session.sessionId, templateData, user?.id, true);
+
+  // 🔥 NEW: Determine if current user is host
+  const isHost = user?.id === session.hostId;
+
+  // 🔥 NEW: Initialize WebContainer (host-only boot)
+  const webContainer = useCollabWebContainer({
+    sessionId: session.sessionId,
+    templateData,
+    isHost,
+    userId: user?.id,
+    userName: user?.name,
+    terminalRef,
+  });
 
   // 🔥 NEW: Listen for remote editor changes at the parent level
   useEffect(() => {
     if (!socket) return;
 
-     const handleRemoteEditorChange = (payload: {
-    userId: string;
-    userName: string;
-    fileId: string;
-    content: string;
-    filePath: string;
-  }) => {
-    if (payload.userId === user?.id) return;
+    const handleRemoteEditorChange = (payload: {
+      userId: string;
+      userName: string;
+      fileId: string;
+      content: string;
+      filePath: string;
+    }) => {
+      if (payload.userId === user?.id) return;
 
-    console.log(`📡 Received remote change from ${payload.userName} for file ${payload.fileId}`);
+      console.log(`📡 Received remote change from ${payload.userName} for file ${payload.fileId}`);
 
-    const currentTemplate = useFileExplorer.getState().templateData;
-    if (currentTemplate) {
-      const updatedTemplate = JSON.parse(JSON.stringify(currentTemplate));
+      const currentTemplate = useFileExplorer.getState().templateData;
+      if (currentTemplate) {
+        const updatedTemplate = JSON.parse(JSON.stringify(currentTemplate));
 
-      const updateFileInTree = (items: any[]): any[] => {
-        return items.map((item) => {
-          if ("folderName" in item) {
-            return {
-              ...item,
-              items: updateFileInTree(item.items),
-            };
-          } else {
-            // 🔥 FIX: Generate the ID to match
-            const itemId = generateFileId(item, currentTemplate);
-            
-            if (itemId === payload.fileId) {
-              console.log(`✅ Updated ${item.filename}.${item.fileExtension} in template`);
-              return { ...item, content: payload.content };
+        const updateFileInTree = (items: any[]): any[] => {
+          return items.map((item) => {
+            if ("folderName" in item) {
+              return {
+                ...item,
+                items: updateFileInTree(item.items),
+              };
+            } else {
+              // 🔥 FIX: Generate the ID to match
+              const itemId = generateFileId(item, currentTemplate);
+
+              if (itemId === payload.fileId) {
+                console.log(`✅ Updated ${item.filename}.${item.fileExtension} in template`);
+                return { ...item, content: payload.content };
+              }
+              return item;
             }
-            return item;
-          }
-        });
-      };
+          });
+        };
 
-      updatedTemplate.items = updateFileInTree(updatedTemplate.items);
-      setTemplateData(updatedTemplate);
-    }
+        updatedTemplate.items = updateFileInTree(updatedTemplate.items);
+        setTemplateData(updatedTemplate);
+      }
 
       // 🔥 Update open files (if the file is open)
       const currentOpenFiles = useFileExplorer.getState().openFiles;
       if (Array.isArray(currentOpenFiles)) {
         const fileIsOpen = currentOpenFiles.some((f) => f.id === payload.fileId);
-        
+
         if (fileIsOpen) {
           console.log(`📝 Updating open file: ${payload.fileId}`);
           const updatedOpenFiles = currentOpenFiles.map((file) => {
@@ -174,10 +199,10 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
               break;
             case "delete":
               toast.info(`${payload.userName} ${payload.isFolder ? 'deleted folder' : 'deleted file'}: ${fileName}`);
-              
+
               // 🔥 Close the file if it's currently open
               const currentOpenFiles = useFileExplorer.getState().openFiles;
-              const fileToClose = currentOpenFiles.find((f) => 
+              const fileToClose = currentOpenFiles.find((f) =>
                 `${f.path}/${f.filename}.${f.fileExtension}`.replace(/^\//, '') === payload.filePath
               );
               if (fileToClose) {
@@ -237,7 +262,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
       const result = await handleAddFile(
         newFile,
         parentPath,
-        async () => {},
+        async () => { },
         null,
         saveCollabWorkspace
       );
@@ -246,7 +271,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
       const filePath = parentPath
         ? `${parentPath}/${newFile.filename}.${newFile.fileExtension}`
         : `${newFile.filename}.${newFile.fileExtension}`;
-      
+
       emitFileAction({
         action: "create",
         filePath,
@@ -254,12 +279,12 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
       });
 
       console.log(`📤 Emitted file creation: ${filePath}`);
-      
+
       return result;
     },
     [handleAddFile, saveCollabWorkspace, emitFileAction]
   );
-  
+
   const wrappedHandleAddFolder = useCallback(
     async (newFolder: TemplateFolder, parentPath: string) => {
       const result = await handleAddFolder(
@@ -273,7 +298,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
       const folderPath = parentPath
         ? `${parentPath}/${newFolder.folderName}`
         : newFolder.folderName;
-      
+
       emitFileAction({
         action: "create",
         filePath: folderPath,
@@ -281,27 +306,28 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
       });
 
       console.log(`📤 Emitted folder creation: ${folderPath}`);
-      
+
       return result;
     },
     [handleAddFolder, saveCollabWorkspace, emitFileAction]
   );
-   const wrappedHandleDeleteFile = useCallback(
+
+  const wrappedHandleDeleteFile = useCallback(
     async (file: TemplateFile, parentPath: string) => {
       const result = await handleDeleteFile(file, parentPath, saveCollabWorkspace);
-      
+
       // 🔥 Emit file deletion to other participants
       const filePath = parentPath
         ? `${parentPath}/${file.filename}.${file.fileExtension}`
         : `${file.filename}.${file.fileExtension}`;
-      
+
       emitFileAction({
         action: "delete",
         filePath,
       });
 
       console.log(`📤 Emitted file deletion: ${filePath}`);
-      
+
       return result;
     },
     [handleDeleteFile, saveCollabWorkspace, emitFileAction]
@@ -315,19 +341,18 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
       const folderPath = parentPath
         ? `${parentPath}/${folder.folderName}`
         : folder.folderName;
-      
+
       emitFileAction({
         action: "delete",
         filePath: folderPath,
       });
 
       console.log(`📤 Emitted folder deletion: ${folderPath}`);
-      
+
       return result;
     },
     [handleDeleteFolder, saveCollabWorkspace, emitFileAction]
   );
-
 
   const wrappedHandleRenameFile = useCallback(
     async (
@@ -339,7 +364,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
       const oldPath = parentPath
         ? `${parentPath}/${file.filename}.${file.fileExtension}`
         : `${file.filename}.${file.fileExtension}`;
-      
+
       const newPath = parentPath
         ? `${parentPath}/${newFilename}.${newExtension}`
         : `${newFilename}.${newExtension}`;
@@ -360,19 +385,18 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
       });
 
       console.log(`📤 Emitted file rename: ${oldPath} → ${newPath}`);
-      
+
       return result;
     },
     [handleRenameFile, saveCollabWorkspace, emitFileAction]
   );
-
 
   const wrappedHandleRenameFolder = useCallback(
     async (folder: TemplateFolder, newFolderName: string, parentPath: string) => {
       const oldPath = parentPath
         ? `${parentPath}/${folder.folderName}`
         : folder.folderName;
-      
+
       const newPath = parentPath
         ? `${parentPath}/${newFolderName}`
         : newFolderName;
@@ -392,14 +416,11 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
       });
 
       console.log(`📤 Emitted folder rename: ${oldPath} → ${newPath}`);
-      
+
       return result;
     },
     [handleRenameFolder, saveCollabWorkspace, emitFileAction]
   );
-
-
-
 
   // 🔥 File selection handler
   const handleFileSelect = useCallback(
@@ -416,7 +437,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     [openFile, emitFileOpen]
   );
 
-  // 🔥 Content change handler - Now syncs with socket
+  // 🔥 Content change handler - Now syncs with socket AND WebContainer
   const handleFileContentChange = useCallback(
     (fileId: string, newContent: string) => {
       console.log("✏️ Content changed for file:", fileId);
@@ -437,7 +458,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
                 items: updateFileInTree(item.items),
               };
             } else {
-              const itemid = generateFileId(item,currentTemplate)
+              const itemid = generateFileId(item, currentTemplate)
               if (itemid === fileId) {
                 return { ...item, content: newContent };
               }
@@ -448,11 +469,18 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
 
         updatedTemplate.items = updateFileInTree(updatedTemplate.items);
         setTemplateData(updatedTemplate);
+
+        // 🔥 NEW: Sync to WebContainer
+        const file = openFiles.find(f => f.id === fileId);
+        if (file) {
+          const filePath = `/${file.path || ""}/${file.filename}.${file.fileExtension}`.replace(/^\/+/, '/');
+          webContainer.syncFileToContainer(filePath, newContent);
+        }
       }
 
       // Note: Socket emission is handled by CollabEditor's emitEditorChange
     },
-    [updateFileContent, setTemplateData]
+    [updateFileContent, setTemplateData, openFiles, webContainer]
   );
 
   // 🔥 Save current file
@@ -482,10 +510,10 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
       const updatedOpenFiles = openFiles.map((f) =>
         f.id === activeFileId
           ? {
-              ...f,
-              originalContent: f.content,
-              hasUnsavedChanges: false,
-            }
+            ...f,
+            originalContent: f.content,
+            hasUnsavedChanges: false,
+          }
           : f
       );
       setOpenFiles(updatedOpenFiles);
@@ -515,7 +543,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
 
     try {
       setIsSaving(true);
-      
+
       if (!templateData) return;
 
       // Template data should already be updated from handleFileContentChange
@@ -703,6 +731,15 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     <TooltipProvider>
       <SidebarProvider>
         <div className="flex h-screen w-full bg-background">
+          {/* 🔥 NEW: Host Offline Banner (for guests) */}
+          {!isHost && (
+            <HostOfflineBanner
+              socket={socket}
+              sessionId={session.sessionId}
+              isHost={isHost}
+            />
+          )}
+
           {templateData && (
             <TemplateFileTree
               data={templateData}
@@ -764,6 +801,58 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
                     <TooltipContent>Save All (Ctrl+Shift+S)</TooltipContent>
                   </Tooltip>
 
+                  {/* 🔥 NEW: Preview Toggle Button */}
+                  <Button
+                    size="sm"
+                    variant={showPreview ? "default" : "outline"}
+                    onClick={() => setShowPreview(!showPreview)}
+                  >
+                    {showPreview ? "Hide Preview" : "Show Preview"}
+                  </Button>
+
+                  {/* 🔥 NEW: WebContainer Controls (Host Only) */}
+                  {isHost && (
+                    <div className="flex items-center gap-2 border-l pl-4">
+                      {!webContainer.isServerRunning ? (
+                        <Button
+                          size="sm"
+                          onClick={webContainer.startServer}
+                          disabled={webContainer.isLoading}
+                        >
+                          <Play className="h-4 w-4 mr-1" />
+                          Start Server
+                        </Button>
+                      ) : (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={webContainer.stopServer}
+                          >
+                            <Square className="h-4 w-4 mr-1" />
+                            Stop
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={webContainer.restartServer}
+                          >
+                            <RotateCcw className="h-4 w-4 mr-1" />
+                            Restart
+                          </Button>
+                        </>
+                      )}
+                      
+                      {/* 🔥 WebContainer Status Badge */}
+                      {webContainer.isLoading && (
+                        <span className="text-xs text-muted-foreground">Loading...</span>
+                      )}
+                      {webContainer.serverUrl && (
+                        <span className="text-xs text-green-600">● Live</span>
+                      )}
+                    </div>
+                  )}
+
                   <div className="flex items-center gap-2">
                     {isConnected ? (
                       <>
@@ -810,90 +899,199 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
               </div>
             )}
 
-            {openFiles.length > 0 && (
-              <div className="border-b border-border bg-muted/30">
-                <div className="flex items-center justify-between px-4 py-2">
-                  <div className="flex items-center gap-1 overflow-x-auto">
-                    {openFiles.map((file) => {
-                      const isDuplicate = openFiles.some(
-                        (f) =>
-                          f.filename === file.filename &&
-                          f.fileExtension === file.fileExtension &&
-                          f.id !== file.id
-                      );
-                      const displayName =
-                        isDuplicate && file.path
-                          ? `${file.path}/${file.filename}.${file.fileExtension}`
-                          : `${file.filename}.${file.fileExtension}`;
+            {/* 🔥 NEW: Split Layout - Editor + Preview */}
+            {showPreview ? (
+              <div className="flex flex-1 overflow-hidden">
+                {/* Left: Editor */}
+                <div className="flex flex-col w-1/2 border-r">
+                  {/* File Tabs */}
+                  {openFiles.length > 0 && (
+                    <div className="border-b border-border bg-muted/30">
+                      <div className="flex items-center justify-between px-4 py-2">
+                        <div className="flex items-center gap-1 overflow-x-auto">
+                          {openFiles.map((file) => {
+                            const isDuplicate = openFiles.some(
+                              (f) =>
+                                f.filename === file.filename &&
+                                f.fileExtension === file.fileExtension &&
+                                f.id !== file.id
+                            );
+                            const displayName =
+                              isDuplicate && file.path
+                                ? `${file.path}/${file.filename}.${file.fileExtension}`
+                                : `${file.filename}.${file.fileExtension}`;
 
-                      return (
-                        <div
-                          key={file.id}
-                          onClick={() => setActiveFileId(file.id)}
-                          className={`flex items-center gap-2 px-3 py-1 rounded-t-md cursor-pointer border-b-2 transition-all ${
-                            activeFileId === file.id
-                              ? "border-primary bg-background"
-                              : "border-transparent hover:bg-muted"
-                          }`}
-                        >
-                          <FileText className="h-3 w-3" />
-                          <span className="text-sm" title={displayName}>
-                            {displayName}
-                          </span>
-                          {file.hasUnsavedChanges && (
-                            <span className="h-2 w-2 rounded-full bg-orange-500" />
-                          )}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              closeFile(file.id);
-                            }}
-                            className="ml-1 hover:bg-destructive hover:text-white rounded p-0.5"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
+                            return (
+                              <div
+                                key={file.id}
+                                onClick={() => setActiveFileId(file.id)}
+                                className={`flex items-center gap-2 px-3 py-1 rounded-t-md cursor-pointer border-b-2 transition-all ${
+                                  activeFileId === file.id
+                                    ? "border-primary bg-background"
+                                    : "border-transparent hover:bg-muted"
+                                }`}
+                              >
+                                <FileText className="h-3 w-3" />
+                                <span className="text-sm" title={displayName}>
+                                  {displayName}
+                                </span>
+                                {file.hasUnsavedChanges && (
+                                  <span className="h-2 w-2 rounded-full bg-orange-500" />
+                                )}
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    closeFile(file.id);
+                                  }}
+                                  className="ml-1 hover:bg-destructive hover:text-white rounded p-0.5"
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
-                  </div>
-                  {openFiles.length > 1 && (
-                    <button
-                      onClick={closeAllFiles}
-                      className="text-xs text-muted-foreground hover:text-foreground"
-                    >
-                      Close All
-                    </button>
+                        {openFiles.length > 1 && (
+                          <button
+                            onClick={closeAllFiles}
+                            className="text-xs text-muted-foreground hover:text-foreground"
+                          >
+                            Close All
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   )}
+
+                  {/* Editor */}
+                  <div className="flex-1 overflow-hidden">
+                    {activeFile ? (
+                      <CollabEditor
+                        sessionId={session.sessionId}
+                        userId={user?.id}
+                        userName={user?.name || "Anonymous"}
+                        fileId={activeFile.id}
+                        filePath={`${activeFile.path || ""}/${activeFile.filename}.${
+                          activeFile.fileExtension
+                        }`.replace(/^\//, "")}
+                        initialContent={
+                          typeof activeFile.content === "string" ? activeFile.content : ""
+                        }
+                        language={getLanguage(activeFile.fileExtension || "")}
+                        onContentChange={(content) =>
+                          handleFileContentChange(activeFile.id, content)
+                        }
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                        No files open. Select a file from the sidebar.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right: WebContainer Preview */}
+                <div className="w-1/2">
+                  <WebContainerPreview
+    serverUrl={webContainer.serverUrl}
+    isLoading={webContainer.isLoading}
+    error={webContainer.error}
+    instance={isHost ? webContainer.instance : null}
+    onRestartServer={isHost ? webContainer.restartServer : undefined}
+    terminalRef={isHost ? terminalRef : undefined}
+    showTerminal={isHost} // 🔥 ADD THIS LINE
+  />
                 </div>
               </div>
-            )}
+            ) : (
+              /* Original Full-Width Editor (no preview) */
+              <>
+                {openFiles.length > 0 && (
+                  <div className="border-b border-border bg-muted/30">
+                    <div className="flex items-center justify-between px-4 py-2">
+                      <div className="flex items-center gap-1 overflow-x-auto">
+                        {openFiles.map((file) => {
+                          const isDuplicate = openFiles.some(
+                            (f) =>
+                              f.filename === file.filename &&
+                              f.fileExtension === file.fileExtension &&
+                              f.id !== file.id
+                          );
+                          const displayName =
+                            isDuplicate && file.path
+                              ? `${file.path}/${file.filename}.${file.fileExtension}`
+                              : `${file.filename}.${file.fileExtension}`;
 
-            <div className="flex-1 overflow-hidden">
-              {activeFile ? (
-                <CollabEditor
-                  sessionId={session.sessionId}
-                  userId={user?.id}
-                  userName={user?.name || "Anonymous"}
-                  fileId={activeFile.id}
-                  filePath={`${activeFile.path || ""}/${activeFile.filename}.${
-                    activeFile.fileExtension
-                  }`.replace(/^\//, "")}
-                  initialContent={
-                    typeof activeFile.content === "string" ? activeFile.content : ""
-                  }
-                  language={getLanguage(activeFile.fileExtension || "")}
-                  onContentChange={(content) =>
-                    handleFileContentChange(activeFile.id, content)
-                  }
-                />
-              ) : (
-                <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                  {templateData
-                    ? "No files open. Select a file from the sidebar."
-                    : "Loading template..."}
+                          return (
+                            <div
+                              key={file.id}
+                              onClick={() => setActiveFileId(file.id)}
+                              className={`flex items-center gap-2 px-3 py-1 rounded-t-md cursor-pointer border-b-2 transition-all ${
+                                activeFileId === file.id
+                                  ? "border-primary bg-background"
+                                  : "border-transparent hover:bg-muted"
+                              }`}
+                            >
+                              <FileText className="h-3 w-3" />
+                              <span className="text-sm" title={displayName}>
+                                {displayName}
+                              </span>
+                              {file.hasUnsavedChanges && (
+                                <span className="h-2 w-2 rounded-full bg-orange-500" />
+                              )}
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  closeFile(file.id);
+                                }}
+                                className="ml-1 hover:bg-destructive hover:text-white rounded p-0.5"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      {openFiles.length > 1 && (
+                        <button
+                          onClick={closeAllFiles}
+                          className="text-xs text-muted-foreground hover:text-foreground"
+                        >
+                          Close All
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex-1 overflow-hidden">
+                  {activeFile ? (
+                    <CollabEditor
+                      sessionId={session.sessionId}
+                      userId={user?.id}
+                      userName={user?.name || "Anonymous"}
+                      fileId={activeFile.id}
+                      filePath={`${activeFile.path || ""}/${activeFile.filename}.${
+                        activeFile.fileExtension
+                      }`.replace(/^\//, "")}
+                      initialContent={
+                        typeof activeFile.content === "string" ? activeFile.content : ""
+                      }
+                      language={getLanguage(activeFile.fileExtension || "")}
+                      onContentChange={(content) =>
+                        handleFileContentChange(activeFile.id, content)
+                      }
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                      {templateData
+                        ? "No files open. Select a file from the sidebar."
+                        : "Loading template..."}
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </>
+            )}
           </div>
         </div>
       </SidebarProvider>
