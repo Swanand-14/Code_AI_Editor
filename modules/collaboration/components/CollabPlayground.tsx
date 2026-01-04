@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef } from "react";
-import { Users, Clock, AlertCircle, Wifi, WifiOff, FileText, X, Save, Play, Square, RotateCcw } from "lucide-react"; // 🔥 Added Play, Square, RotateCcw
+import { Users, Clock, AlertCircle, Wifi, WifiOff, FileText, X, Save, Play, Square, RotateCcw, Activity } from "lucide-react";
 import { toast } from "sonner";
 import { joinCollabSession } from "../actions";
 import { useCollabSocket } from "../hooks/useCollabSocket";
@@ -32,6 +32,10 @@ import { WebContainerPreview } from "@/modules/webContainers/components/WebConta
 import { HostOfflineBanner } from "./HostOfflineBanner";
 import TerminalComponent, { TerminalRef } from "@/modules/webContainers/components/terminal";
 
+// 🔥 NEW: Import awareness components
+import { ParticipantsPanel } from "./ParticipantsPanel";
+import { ActivityFeed, useActivityLogger } from "./ActivityFeed";
+
 interface CollabPlaygroundProps {
   session: CollabSessionData;
 }
@@ -42,13 +46,15 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
   const [user, setUser] = useState<{ id: string; name: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   
-  // 🔥 NEW: Preview toggle state
+  // 🔥 NEW: Preview and panel toggle states
   const [showPreview, setShowPreview] = useState(false);
+  const [showParticipants, setShowParticipants] = useState(true);
+  const [showActivity, setShowActivity] = useState(true);
   
   // 🔥 NEW: Terminal ref for WebContainer
   const terminalRef = useRef<TerminalRef>(null);
 
-  // 🔥 Use the same Zustand store as main playground
+  // Use the same Zustand store as main playground
   const {
     templateData,
     setTemplateData,
@@ -69,18 +75,36 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     updateFileContent,
   } = useFileExplorer();
 
-  // Initialize WebSocket connection
-  const { socket, isConnected, participants, emitFileOpen, emitFileChange, emitFileAction } = useCollabSocket(
-    session.sessionId,
-    user?.id,
-    user?.name
-  );
+  // 🔥 UPDATED: Initialize WebSocket connection with Redis-backed awareness
+  const {
+    socket,
+    isConnected,
+    participants, // Legacy
+    presences, // New Redis-backed
+    remoteCursors,
+    activities,
+    fileLocks,
+    emitFileOpen,
+    emitFileAction,
+    emitActivity,
+    emitPresenceUpdate,
+  } = useCollabSocket(session.sessionId, user?.id, user?.name);
+
+  // 🔥 NEW: Activity logger hook
+  const {
+    logFileCreated,
+    logFileDeleted,
+    logFileRenamed,
+    logFolderCreated,
+    logFolderDeleted,
+  } = useActivityLogger(emitActivity);
+
   const { saveWorkSpace } = useWorkspaceAutoSave(session.sessionId, templateData, user?.id, true);
 
-  // 🔥 NEW: Determine if current user is host
+  // Determine if current user is host
   const isHost = user?.id === session.hostId;
 
-  // 🔥 NEW: Initialize WebContainer (host-only boot)
+  // Initialize WebContainer (host-only boot)
   const webContainer = useCollabWebContainer({
     sessionId: session.sessionId,
     templateData,
@@ -90,7 +114,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     terminalRef,
   });
 
-  // 🔥 NEW: Listen for remote editor changes at the parent level
+  // Listen for remote editor changes at the parent level
   useEffect(() => {
     if (!socket) return;
 
@@ -117,7 +141,6 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
                 items: updateFileInTree(item.items),
               };
             } else {
-              // 🔥 FIX: Generate the ID to match
               const itemId = generateFileId(item, currentTemplate);
 
               if (itemId === payload.fileId) {
@@ -133,7 +156,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
         setTemplateData(updatedTemplate);
       }
 
-      // 🔥 Update open files (if the file is open)
+      // Update open files (if the file is open)
       const currentOpenFiles = useFileExplorer.getState().openFiles;
       if (Array.isArray(currentOpenFiles)) {
         const fileIsOpen = currentOpenFiles.some((f) => f.id === payload.fileId);
@@ -142,8 +165,6 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
           console.log(`📝 Updating open file: ${payload.fileId}`);
           const updatedOpenFiles = currentOpenFiles.map((file) => {
             if (file.id === payload.fileId) {
-              // Only update if it's not the active file being edited
-              // (active file updates are handled by CollabEditor)
               if (file.id !== activeFileId) {
                 return {
                   ...file,
@@ -179,19 +200,16 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
       content?: string;
       isFolder?: boolean;
     }) => {
-      // Skip if it's from current user
       if (payload.userId === user?.id) return;
 
       console.log(`🔧 Received file action from ${payload.userName}:`, payload.action, payload.filePath);
 
-      // Reload the workspace from database to get the latest state
       try {
         const workspace = await getCollabWorkspaceBySession(session.sessionId);
         if (workspace && workspace.templateData) {
           const enrichedTemplate = enrichTemplateWithPaths(workspace.templateData);
           setTemplateData(enrichedTemplate);
 
-          // Show notification to user
           const fileName = payload.filePath.split('/').pop();
           switch (payload.action) {
             case "create":
@@ -200,7 +218,6 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
             case "delete":
               toast.info(`${payload.userName} ${payload.isFolder ? 'deleted folder' : 'deleted file'}: ${fileName}`);
 
-              // 🔥 Close the file if it's currently open
               const currentOpenFiles = useFileExplorer.getState().openFiles;
               const fileToClose = currentOpenFiles.find((f) =>
                 `${f.path}/${f.filename}.${f.fileExtension}`.replace(/^\//, '') === payload.filePath
@@ -228,7 +245,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     };
   }, [socket, user?.id, session.sessionId, setTemplateData, closeFile]);
 
-  // 🔥 Save function similar to main playground
+  // Save function similar to main playground
   const saveCollabWorkspace = useCallback(
     async (updatedTemplate: TemplateFolder) => {
       try {
@@ -256,7 +273,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     [session.sessionId, user?.id]
   );
 
-  // 🔥 Wrapped handlers (same pattern as main playground)
+  // 🔥 UPDATED: Wrapped handlers with activity logging
   const wrappedHandleAddFile = useCallback(
     async (newFile: TemplateFile, parentPath: string) => {
       const result = await handleAddFile(
@@ -267,7 +284,6 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
         saveCollabWorkspace
       );
 
-      // 🔥 Emit file creation to other participants
       const filePath = parentPath
         ? `${parentPath}/${newFile.filename}.${newFile.fileExtension}`
         : `${newFile.filename}.${newFile.fileExtension}`;
@@ -278,11 +294,14 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
         content: newFile.content || "",
       });
 
+      // 🔥 Log activity
+      logFileCreated(filePath);
+
       console.log(`📤 Emitted file creation: ${filePath}`);
 
       return result;
     },
-    [handleAddFile, saveCollabWorkspace, emitFileAction]
+    [handleAddFile, saveCollabWorkspace, emitFileAction, logFileCreated]
   );
 
   const wrappedHandleAddFolder = useCallback(
@@ -294,7 +313,6 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
         saveCollabWorkspace
       );
 
-      // 🔥 Emit folder creation to other participants
       const folderPath = parentPath
         ? `${parentPath}/${newFolder.folderName}`
         : newFolder.folderName;
@@ -305,18 +323,20 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
         content: "",
       });
 
+      // 🔥 Log activity
+      logFolderCreated(folderPath);
+
       console.log(`📤 Emitted folder creation: ${folderPath}`);
 
       return result;
     },
-    [handleAddFolder, saveCollabWorkspace, emitFileAction]
+    [handleAddFolder, saveCollabWorkspace, emitFileAction, logFolderCreated]
   );
 
   const wrappedHandleDeleteFile = useCallback(
     async (file: TemplateFile, parentPath: string) => {
       const result = await handleDeleteFile(file, parentPath, saveCollabWorkspace);
 
-      // 🔥 Emit file deletion to other participants
       const filePath = parentPath
         ? `${parentPath}/${file.filename}.${file.fileExtension}`
         : `${file.filename}.${file.fileExtension}`;
@@ -326,18 +346,20 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
         filePath,
       });
 
+      // 🔥 Log activity
+      logFileDeleted(filePath);
+
       console.log(`📤 Emitted file deletion: ${filePath}`);
 
       return result;
     },
-    [handleDeleteFile, saveCollabWorkspace, emitFileAction]
+    [handleDeleteFile, saveCollabWorkspace, emitFileAction, logFileDeleted]
   );
 
   const wrappedHandleDeleteFolder = useCallback(
     async (folder: TemplateFolder, parentPath: string) => {
       const result = await handleDeleteFolder(folder, parentPath, saveCollabWorkspace);
 
-      // 🔥 Emit folder deletion to other participants
       const folderPath = parentPath
         ? `${parentPath}/${folder.folderName}`
         : folder.folderName;
@@ -347,11 +369,14 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
         filePath: folderPath,
       });
 
+      // 🔥 Log activity
+      logFolderDeleted(folderPath);
+
       console.log(`📤 Emitted folder deletion: ${folderPath}`);
 
       return result;
     },
-    [handleDeleteFolder, saveCollabWorkspace, emitFileAction]
+    [handleDeleteFolder, saveCollabWorkspace, emitFileAction, logFolderDeleted]
   );
 
   const wrappedHandleRenameFile = useCallback(
@@ -377,18 +402,20 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
         saveCollabWorkspace
       );
 
-      // 🔥 Emit file rename to other participants
       emitFileAction({
         action: "rename",
         filePath: oldPath,
         newPath: newPath,
       });
 
+      // 🔥 Log activity
+      logFileRenamed(oldPath, newPath);
+
       console.log(`📤 Emitted file rename: ${oldPath} → ${newPath}`);
 
       return result;
     },
-    [handleRenameFile, saveCollabWorkspace, emitFileAction]
+    [handleRenameFile, saveCollabWorkspace, emitFileAction, logFileRenamed]
   );
 
   const wrappedHandleRenameFolder = useCallback(
@@ -408,44 +435,50 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
         saveCollabWorkspace
       );
 
-      // 🔥 Emit folder rename to other participants
       emitFileAction({
         action: "rename",
         filePath: oldPath,
         newPath: newPath,
       });
 
+      // 🔥 Log activity (using file rename for now, could add folder-specific)
+      logFileRenamed(oldPath, newPath);
+
       console.log(`📤 Emitted folder rename: ${oldPath} → ${newPath}`);
 
       return result;
     },
-    [handleRenameFolder, saveCollabWorkspace, emitFileAction]
+    [handleRenameFolder, saveCollabWorkspace, emitFileAction, logFileRenamed]
   );
 
-  // 🔥 File selection handler
+  // 🔥 UPDATED: File selection handler with presence update
   const handleFileSelect = useCallback(
     (file: TemplateFile & { path?: string }) => {
       console.log("📄 File selected:", file);
 
+      // 🔥 CRITICAL: Set as active file AND open it
+      setActiveFileId(file.id);
       openFile(file);
 
       const filePath = `${file.path || ""}/${file.filename}.${file.fileExtension}`.replace(
         /^\//, ""
       );
+      
       emitFileOpen(file.id, filePath);
+      
+      // 🔥 Update presence with current file
+      emitPresenceUpdate({ fileId: file.id, filePath }, false);
     },
-    [openFile, emitFileOpen]
+    [openFile, setActiveFileId, emitFileOpen, emitPresenceUpdate]
   );
 
-  // 🔥 Content change handler - Now syncs with socket AND WebContainer
+  // Content change handler - Now syncs with socket AND WebContainer
   const handleFileContentChange = useCallback(
     (fileId: string, newContent: string) => {
       console.log("✏️ Content changed for file:", fileId);
 
-      // Update local Zustand state
       updateFileContent(fileId, newContent);
 
-      // 🔥 CRITICAL: Also update the template data immediately
       const currentTemplate = useFileExplorer.getState().templateData;
       if (currentTemplate) {
         const updatedTemplate = JSON.parse(JSON.stringify(currentTemplate));
@@ -458,7 +491,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
                 items: updateFileInTree(item.items),
               };
             } else {
-              const itemid = generateFileId(item, currentTemplate)
+              const itemid = generateFileId(item, currentTemplate);
               if (itemid === fileId) {
                 return { ...item, content: newContent };
               }
@@ -470,20 +503,46 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
         updatedTemplate.items = updateFileInTree(updatedTemplate.items);
         setTemplateData(updatedTemplate);
 
-        // 🔥 NEW: Sync to WebContainer
+        // Sync to WebContainer
         const file = openFiles.find(f => f.id === fileId);
         if (file) {
           const filePath = `/${file.path || ""}/${file.filename}.${file.fileExtension}`.replace(/^\/+/, '/');
           webContainer.syncFileToContainer(filePath, newContent);
         }
       }
-
-      // Note: Socket emission is handled by CollabEditor's emitEditorChange
     },
     [updateFileContent, setTemplateData, openFiles, webContainer]
   );
 
-  // 🔥 Save current file
+  // 🔥 NEW: Handle participant click (jump to their file)
+  const handleParticipantClick = useCallback(
+    (userId: string, fileId?: string) => {
+      if (!fileId || !templateData) return;
+
+      // Find the file in template
+      const findFile = (items: any[]): any => {
+        for (const item of items) {
+          if ("folderName" in item) {
+            const found = findFile(item.items);
+            if (found) return found;
+          } else {
+            const itemId = generateFileId(item, templateData);
+            if (itemId === fileId) return item;
+          }
+        }
+        return null;
+      };
+
+      const file = findFile(templateData.items);
+      if (file) {
+        handleFileSelect(file);
+        toast.info(`Jumped to ${file.filename}.${file.fileExtension}`);
+      }
+    },
+    [templateData, handleFileSelect]
+  );
+
+  // Save current file
   const handleSave = useCallback(async () => {
     if (!activeFileId || !templateData) {
       toast.error("No active file to save");
@@ -499,14 +558,11 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     try {
       setIsSaving(true);
 
-      // Template data should already be updated from handleFileContentChange
-      // Just save it to database
       const result = await saveCollabWorkspace(templateData);
       if (!result) {
         throw new Error("Failed to save");
       }
 
-      // Mark as saved in open files
       const updatedOpenFiles = openFiles.map((f) =>
         f.id === activeFileId
           ? {
@@ -525,15 +581,9 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     } finally {
       setIsSaving(false);
     }
-  }, [
-    activeFileId,
-    templateData,
-    openFiles,
-    saveCollabWorkspace,
-    setOpenFiles,
-  ]);
+  }, [activeFileId, templateData, openFiles, saveCollabWorkspace, setOpenFiles]);
 
-  // 🔥 Save all files
+  // Save all files
   const handleSaveAll = useCallback(async () => {
     const unsavedFiles = openFiles.filter((f) => f.hasUnsavedChanges);
     if (unsavedFiles.length === 0) {
@@ -546,12 +596,9 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
 
       if (!templateData) return;
 
-      // Template data should already be updated from handleFileContentChange
-      // Just save it to database
       const result = await saveCollabWorkspace(templateData);
       if (!result) throw new Error("Failed to save");
 
-      // Mark all as saved
       const updatedOpenFiles = openFiles.map((f) => ({
         ...f,
         originalContent: f.content,
@@ -568,7 +615,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     }
   }, [openFiles, templateData, saveCollabWorkspace, setOpenFiles]);
 
-  // 🔥 Keyboard shortcuts
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === "s") {
@@ -585,7 +632,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleSave, handleSaveAll]);
 
-  // 🔥 Initialize
+  // Initialize
   useEffect(() => {
     let mounted = true;
 
@@ -731,7 +778,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     <TooltipProvider>
       <SidebarProvider>
         <div className="flex h-screen w-full bg-background">
-          {/* 🔥 NEW: Host Offline Banner (for guests) */}
+          {/* Host Offline Banner (for guests) */}
           {!isHost && (
             <HostOfflineBanner
               socket={socket}
@@ -801,7 +848,26 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
                     <TooltipContent>Save All (Ctrl+Shift+S)</TooltipContent>
                   </Tooltip>
 
-                  {/* 🔥 NEW: Preview Toggle Button */}
+                  {/* 🔥 NEW: Awareness panel toggles */}
+                  <Button
+                    size="sm"
+                    variant={showParticipants ? "default" : "outline"}
+                    onClick={() => setShowParticipants(!showParticipants)}
+                  >
+                    <Users className="h-4 w-4 mr-1" />
+                    Participants
+                  </Button>
+
+                  <Button
+                    size="sm"
+                    variant={showActivity ? "default" : "outline"}
+                    onClick={() => setShowActivity(!showActivity)}
+                  >
+                    <Activity className="h-4 w-4 mr-1" />
+                    Activity
+                  </Button>
+
+                  {/* Preview Toggle Button */}
                   <Button
                     size="sm"
                     variant={showPreview ? "default" : "outline"}
@@ -810,7 +876,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
                     {showPreview ? "Hide Preview" : "Show Preview"}
                   </Button>
 
-                  {/* 🔥 NEW: WebContainer Controls (Host Only) */}
+                  {/* WebContainer Controls (Host Only) */}
                   {isHost && (
                     <div className="flex items-center gap-2 border-l pl-4">
                       {!webContainer.isServerRunning ? (
@@ -842,8 +908,8 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
                           </Button>
                         </>
                       )}
-                      
-                      {/* 🔥 WebContainer Status Badge */}
+
+                      {/* WebContainer Status Badge */}
                       {webContainer.isLoading && (
                         <span className="text-xs text-muted-foreground">Loading...</span>
                       )}
@@ -869,7 +935,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
 
                   <div className="flex items-center gap-2">
                     <Users className="h-4 w-4" />
-                    <span className="text-sm">{participants.length} online</span>
+                    <span className="text-sm">{presences.length || participants.length} online</span>
                   </div>
 
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -880,31 +946,142 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
               </div>
             </header>
 
-            {participants.length > 0 && (
+            {/* 🔥 UPDATED: Show presences instead of participants */}
+            {presences.length > 0 && (
               <div className="border-b bg-muted/10 px-4 py-2">
                 <div className="flex items-center gap-2 flex-wrap">
-                  {participants.map((participant, index) => (
+                  {presences.map((presence, index) => (
                     <div
-                      key={`${participant.userId}-${index}`}
+                      key={`${presence.userId}-${index}`}
                       className="flex items-center gap-1 px-2 py-1 bg-background rounded text-sm border"
                     >
-                      <div className="h-2 w-2 rounded-full bg-green-500" />
-                      <span>{participant.userName}</span>
+                      <div className={`h-2 w-2 rounded-full ${
+                        presence.status === 'active' ? 'bg-green-500' :
+                        presence.status === 'idle' ? 'bg-yellow-500' :
+                        'bg-gray-400'
+                      }`} />
+                      <span>{presence.userName}</span>
                       <span className="text-xs text-muted-foreground">
-                        ({participant.role})
+                        ({presence.role})
                       </span>
+                      {presence.isTyping && (
+                        <span className="text-xs text-blue-500">✏️</span>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
             )}
 
-            {/* 🔥 NEW: Split Layout - Editor + Preview */}
-            {showPreview ? (
-              <div className="flex flex-1 overflow-hidden">
-                {/* Left: Editor */}
-                <div className="flex flex-col w-1/2 border-r">
-                  {/* File Tabs */}
+            {/* Main Content Area */}
+            <div className="flex flex-1 overflow-hidden">
+              {/* Center: Editor/Preview */}
+              {showPreview ? (
+                <div className="flex flex-1">
+                  {/* Left: Editor */}
+                  <div className="flex flex-col w-1/2 border-r">
+                    {/* File Tabs */}
+                    {openFiles.length > 0 && (
+                      <div className="border-b border-border bg-muted/30">
+                        <div className="flex items-center justify-between px-4 py-2">
+                          <div className="flex items-center gap-1 overflow-x-auto">
+                            {openFiles.map((file) => {
+                              const isDuplicate = openFiles.some(
+                                (f) =>
+                                  f.filename === file.filename &&
+                                  f.fileExtension === file.fileExtension &&
+                                  f.id !== file.id
+                              );
+                              const displayName =
+                                isDuplicate && file.path
+                                  ? `${file.path}/${file.filename}.${file.fileExtension}`
+                                  : `${file.filename}.${file.fileExtension}`;
+
+                              return (
+                                <div
+                                  key={file.id}
+                                  onClick={() => setActiveFileId(file.id)}
+                                  className={`flex items-center gap-2 px-3 py-1 rounded-t-md cursor-pointer border-b-2 transition-all ${
+                                    activeFileId === file.id
+                                      ? "border-primary bg-background"
+                                      : "border-transparent hover:bg-muted"
+                                  }`}
+                                >
+                                  <FileText className="h-3 w-3" />
+                                  <span className="text-sm" title={displayName}>
+                                    {displayName}
+                                  </span>
+                                  {file.hasUnsavedChanges && (
+                                    <span className="h-2 w-2 rounded-full bg-orange-500" />
+                                  )}
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      closeFile(file.id);
+                                    }}
+                                    className="ml-1 hover:bg-destructive hover:text-white rounded p-0.5"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          {openFiles.length > 1 && (
+                            <button
+                              onClick={closeAllFiles}
+                              className="text-xs text-muted-foreground hover:text-foreground"
+                            >
+                              Close All
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Editor */}
+                    <div className="flex-1 overflow-hidden">
+                      {activeFile ? (
+                        <CollabEditor
+                          sessionId={session.sessionId}
+                          userId={user?.id}
+                          userName={user?.name || "Anonymous"}
+                          fileId={activeFile.id}
+                          filePath={`${activeFile.path || ""}/${activeFile.filename}.${
+                            activeFile.fileExtension
+                          }`.replace(/^\//, "")}
+                          initialContent={
+                            typeof activeFile.content === "string" ? activeFile.content : ""
+                          }
+                          language={getLanguage(activeFile.fileExtension || "")}
+                          onContentChange={(content) =>
+                            handleFileContentChange(activeFile.id, content)
+                          }
+                        />
+                      ) : (
+                        <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                          No files open. Select a file from the sidebar.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right: WebContainer Preview */}
+                  <div className="w-1/2">
+                    <WebContainerPreview
+                      serverUrl={webContainer.serverUrl}
+                      isLoading={webContainer.isLoading}
+                      error={webContainer.error}
+                      instance={isHost ? webContainer.instance : null}
+                      onRestartServer={isHost ? webContainer.restartServer : undefined}
+                      terminalRef={isHost ? terminalRef : undefined}
+                      showTerminal={isHost}
+                    />
+                  </div>
+                </div>
+              ) : (
+                /* Full-Width Editor (no preview) */
+                <>
                   {openFiles.length > 0 && (
                     <div className="border-b border-border bg-muted/30">
                       <div className="flex items-center justify-between px-4 py-2">
@@ -963,7 +1140,6 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
                     </div>
                   )}
 
-                  {/* Editor */}
                   <div className="flex-1 overflow-hidden">
                     {activeFile ? (
                       <CollabEditor
@@ -984,114 +1160,37 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
                       />
                     ) : (
                       <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                        No files open. Select a file from the sidebar.
+                        {templateData
+                          ? "No files open. Select a file from the sidebar."
+                          : "Loading template..."}
                       </div>
                     )}
                   </div>
-                </div>
+                </>
+              )}
 
-                {/* Right: WebContainer Preview */}
-                <div className="w-1/2">
-                  <WebContainerPreview
-    serverUrl={webContainer.serverUrl}
-    isLoading={webContainer.isLoading}
-    error={webContainer.error}
-    instance={isHost ? webContainer.instance : null}
-    onRestartServer={isHost ? webContainer.restartServer : undefined}
-    terminalRef={isHost ? terminalRef : undefined}
-    showTerminal={isHost} // 🔥 ADD THIS LINE
-  />
-                </div>
-              </div>
-            ) : (
-              /* Original Full-Width Editor (no preview) */
-              <>
-                {openFiles.length > 0 && (
-                  <div className="border-b border-border bg-muted/30">
-                    <div className="flex items-center justify-between px-4 py-2">
-                      <div className="flex items-center gap-1 overflow-x-auto">
-                        {openFiles.map((file) => {
-                          const isDuplicate = openFiles.some(
-                            (f) =>
-                              f.filename === file.filename &&
-                              f.fileExtension === file.fileExtension &&
-                              f.id !== file.id
-                          );
-                          const displayName =
-                            isDuplicate && file.path
-                              ? `${file.path}/${file.filename}.${file.fileExtension}`
-                              : `${file.filename}.${file.fileExtension}`;
-
-                          return (
-                            <div
-                              key={file.id}
-                              onClick={() => setActiveFileId(file.id)}
-                              className={`flex items-center gap-2 px-3 py-1 rounded-t-md cursor-pointer border-b-2 transition-all ${
-                                activeFileId === file.id
-                                  ? "border-primary bg-background"
-                                  : "border-transparent hover:bg-muted"
-                              }`}
-                            >
-                              <FileText className="h-3 w-3" />
-                              <span className="text-sm" title={displayName}>
-                                {displayName}
-                              </span>
-                              {file.hasUnsavedChanges && (
-                                <span className="h-2 w-2 rounded-full bg-orange-500" />
-                              )}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  closeFile(file.id);
-                                }}
-                                className="ml-1 hover:bg-destructive hover:text-white rounded p-0.5"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {openFiles.length > 1 && (
-                        <button
-                          onClick={closeAllFiles}
-                          className="text-xs text-muted-foreground hover:text-foreground"
-                        >
-                          Close All
-                        </button>
-                      )}
-                    </div>
+              {/* 🔥 NEW: Right Side Panels (Participants & Activity) */}
+              <div className="flex">
+                {showParticipants && (
+                  <div className="w-64">
+                    <ParticipantsPanel
+                      participants={presences}
+                      currentUserId={user?.id}
+                      onUserClick={handleParticipantClick}
+                    />
                   </div>
                 )}
 
-                <div className="flex-1 overflow-hidden">
-                  {activeFile ? (
-                    <CollabEditor
-                      sessionId={session.sessionId}
-                      userId={user?.id}
-                      userName={user?.name || "Anonymous"}
-                      fileId={activeFile.id}
-                      filePath={`${activeFile.path || ""}/${activeFile.filename}.${
-                        activeFile.fileExtension
-                      }`.replace(/^\//, "")}
-                      initialContent={
-                        typeof activeFile.content === "string" ? activeFile.content : ""
-                      }
-                      language={getLanguage(activeFile.fileExtension || "")}
-                      onContentChange={(content) =>
-                        handleFileContentChange(activeFile.id, content)
-                      }
+                {showActivity && (
+                  <div className="w-80">
+                    <ActivityFeed
+                      activities={activities}
+                      currentUserId={user?.id}
                     />
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                      {templateData
-                        ? "No files open. Select a file from the sidebar."
-                        : "Loading template..."}
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </SidebarProvider>

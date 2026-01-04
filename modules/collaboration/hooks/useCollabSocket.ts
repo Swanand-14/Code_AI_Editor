@@ -1,9 +1,17 @@
+// hooks/useCollabSocket.ts - Complete Redis-aligned version
 "use client";
 
-import { useEffect, useRef, useState,useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Socket, io } from "socket.io-client";
+import {
+  UserPresence,
+  UserCursor,
+  ActivityEvent,
+  FileLock,
+  getUserColor,
+} from "@/modules/collaboration/types";
 
-// Import types from server
+// Re-export types for backward compatibility
 export interface CollabUser {
   userId: string;
   userName: string;
@@ -16,7 +24,6 @@ export interface CollabUser {
   };
 }
 
-// Define payload types here to avoid circular imports
 export interface EditorChangePayload {
   sessionId: string;
   userId?: string;
@@ -26,23 +33,6 @@ export interface EditorChangePayload {
   content: string;
   changes: any;
   timestamp: number;
-}
-
-export interface CursorPositionPayload {
-  sessionId: string;
-  userId?: string;
-  userName?: string;
-  fileId: string;
-  position: {
-    lineNumber: number;
-    column: number;
-  };
-  selection?: {
-    startLineNumber: number;
-    startColumn: number;
-    endLineNumber: number;
-    endColumn: number;
-  };
 }
 
 export interface FileActionPayload {
@@ -55,33 +45,51 @@ export interface FileActionPayload {
   content?: string;
 }
 
-export function useCollabSocket(sessionId: string, userId?: string, userName?: string) {
+export function useCollabSocket(
+  sessionId: string,
+  userId?: string,
+  userName?: string
+) {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  
+  // Legacy participants (for backward compatibility)
   const [participants, setParticipants] = useState<CollabUser[]>([]);
-  const socketRef = useRef<Socket | null>(null);
+  
+  // New Redis-backed awareness state
+  const [presences, setPresences] = useState<UserPresence[]>([]);
+  const [remoteCursors, setRemoteCursors] = useState<Map<string, UserCursor>>(new Map());
+  const [activities, setActivities] = useState<ActivityEvent[]>([]);
+  const [fileLocks, setFileLocks] = useState<Map<string, FileLock>>(new Map());
+  const [collisions, setCollisions] = useState<Map<string, any>>(new Map());
+
+  // Debounce refs
+  const cursorDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const presenceDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const editorChangeDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const lastActivityRef = useRef<number>(Date.now());
 
   useEffect(() => {
-    // Initialize socket connection
     const socketInstance = io({
       path: "/api/socket",
       addTrailingSlash: false,
     });
 
-    socketRef.current = socketInstance;
     setSocket(socketInstance);
 
-    // Connection events
     socketInstance.on("connect", () => {
       console.log("✅ Connected to collaboration server");
       setIsConnected(true);
 
-      // Join the collaboration session
       socketInstance.emit("collab:join", {
         sessionId,
         userId,
         userName: userName || "Anonymous",
       });
+
+      // Request initial Redis state
+      socketInstance.emit("presence:request-all", { sessionId });
+      socketInstance.emit("activity:request-all", { sessionId });
     });
 
     socketInstance.on("disconnect", () => {
@@ -89,7 +97,9 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
       setIsConnected(false);
     });
 
-    // Session events
+    // ============================================
+    // LEGACY SESSION EVENTS (for backward compatibility)
+    // ============================================
     socketInstance.on("collab:joined", (data: { participants: CollabUser[] }) => {
       console.log("✅ Joined collaboration session", data);
       setParticipants(data.participants);
@@ -112,42 +122,294 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
       console.error("❌ Collaboration error:", data.message);
     });
 
-    // Cleanup
+    // ============================================
+    // PRESENCE HANDLERS (Redis-backed)
+    // ============================================
+    socketInstance.on("presence:all", (data: { presence: UserPresence[] }) => {
+      console.log("📊 Received all presences:", data.presence.length);
+      setPresences(data.presence);
+    });
+
+    socketInstance.on("presence:update", (presence: UserPresence) => {
+      setPresences((prev) => {
+        const index = prev.findIndex((p) => p.userId === presence.userId);
+        if (index >= 0) {
+          const updated = [...prev];
+          updated[index] = presence;
+          return updated;
+        }
+        return [...prev, presence];
+      });
+    });
+
+    // ============================================
+    // CURSOR HANDLERS (Redis-backed)
+    // ============================================
+    socketInstance.on("cursor:update", (cursor: UserCursor) => {
+      setRemoteCursors((prev) => {
+        const updated = new Map(prev);
+        updated.set(cursor.userId, cursor);
+        return updated;
+      });
+    });
+
+    socketInstance.on("cursor:remove", (data: { userId: string }) => {
+      setRemoteCursors((prev) => {
+        const updated = new Map(prev);
+        updated.delete(data.userId);
+        return updated;
+      });
+    });
+
+    // ============================================
+    // ACTIVITY HANDLERS (Redis-backed)
+    // ============================================
+    socketInstance.on("activity:all", (data: { activities: ActivityEvent[] }) => {
+      console.log("📋 Received activities:", data.activities.length);
+      setActivities(data.activities);
+    });
+
+    socketInstance.on("activity:new", (activity: ActivityEvent) => {
+      setActivities((prev) => [activity, ...prev].slice(0, 20));
+    });
+
+    // ============================================
+    // FILE LOCK HANDLERS (Redis-backed)
+    // ============================================
+    socketInstance.on("file:locked", (lock: FileLock) => {
+      console.log("🔒 File locked:", lock.fileId, "by", lock.userName);
+      setFileLocks((prev) => {
+        const updated = new Map(prev);
+        updated.set(lock.fileId, lock);
+        return updated;
+      });
+    });
+
+    socketInstance.on("file:unlocked", (data: { fileId: string }) => {
+      console.log("🔓 File unlocked:", data.fileId);
+      setFileLocks((prev) => {
+        const updated = new Map(prev);
+        updated.delete(data.fileId);
+        return updated;
+      });
+    });
+
+    socketInstance.on("file:lock-denied", (data: {
+      fileId: string;
+      lockedBy: string;
+      lockType: "soft" | "hard";
+    }) => {
+      console.warn(`⚠️ File locked by ${data.lockedBy} (${data.lockType})`);
+    });
+
+    // ============================================
+    // COLLISION HANDLERS (Redis-backed)
+    // ============================================
+    socketInstance.on("collision:detected", (data: {
+      fileId: string;
+      users: Array<{ userId: string; userName: string; lineNumber: number }>;
+      yourLine: number;
+    }) => {
+      console.log("⚠️ Edit collision detected:", data);
+      setCollisions((prev) => {
+        const updated = new Map(prev);
+        updated.set(data.fileId, data);
+        return updated;
+      });
+
+      // Auto-clear collision after 5 seconds
+      setTimeout(() => {
+        setCollisions((prev) => {
+          const updated = new Map(prev);
+          updated.delete(data.fileId);
+          return updated;
+        });
+      }, 5000);
+    });
+
     return () => {
       socketInstance.disconnect();
     };
   }, [sessionId, userId, userName]);
 
-  // Helper functions to emit events
-  const emitEditorChange = (payload: Omit<EditorChangePayload, "userId" | "userName" | "sessionId">) => {
-    socket?.emit("editor:change", { ...payload, sessionId, userId, userName });
-  };
+  // ============================================
+  // EMIT FUNCTIONS
+  // ============================================
 
-  const emitCursorMove = (payload: Omit<CursorPositionPayload, "userId" | "userName" | "sessionId">) => {
-    socket?.emit("cursor:move", { ...payload, sessionId, userId, userName });
-  };
+  // Editor changes (with debouncing)
+  const emitEditorChange = useCallback(
+    (payload: Omit<EditorChangePayload, "userId" | "userName" | "sessionId">) => {
+      if (!socket || !userId) return;
 
-  const emitFileAction = (payload: Omit<FileActionPayload, "userId" | "userName" | "sessionId">) => {
-    socket?.emit("file:action", { ...payload, sessionId, userId, userName });
-  };
-  const emitFileChange = (fileId: string, content: string, action: 'update' | 'delete') => {
-    socket.emit('file:change', { fileId, content, action });
-  };
+      // Debounce editor changes (200ms)
+      if (editorChangeDebounceRef.current) {
+        clearTimeout(editorChangeDebounceRef.current);
+      }
 
-  const emitFileOpen = (fileId: string, filePath: string) => {
-    socket?.emit("file:open", { fileId, filePath });
-  };
+      editorChangeDebounceRef.current = setTimeout(() => {
+        socket.emit("editor:change", {
+          ...payload,
+          sessionId,
+          userId,
+          userName: userName || "Anonymous",
+        });
+      }, 200);
+    },
+    [socket, sessionId, userId, userName]
+  );
 
-  const emitPresenceUpdate = (status: "online" | "away" | "offline", activeFile?: string) => {
-    socket?.emit("presence:update", { status, activeFile });
-  };
+  // Cursor movements (with debouncing)
+  const emitCursorMove = useCallback(
+    (fileId: string, position: { lineNumber: number; column: number }, selection?: any) => {
+      if (!socket || !userId) return;
 
-  const emitWebContainerCommand = useCallback(
-    (command: "start" | "stop" | "restart") => {
-      socket?.emit("webcontainer:command", {
+      // Debounce cursor updates (100ms)
+      if (cursorDebounceRef.current) {
+        clearTimeout(cursorDebounceRef.current);
+      }
+
+      cursorDebounceRef.current = setTimeout(() => {
+        socket.emit("cursor:move", {
+          sessionId,
+          userId,
+          userName: userName || "Anonymous",
+          fileId,
+          position,
+          selection,
+        });
+
+        lastActivityRef.current = Date.now();
+      }, 100);
+    },
+    [socket, sessionId, userId, userName]
+  );
+
+  const emitCursorHide = useCallback(
+    (fileId: string) => {
+      if (!socket || !userId) return;
+
+      socket.emit("cursor:hide", {
         sessionId,
         userId,
-        userName,
+        fileId,
+      });
+    },
+    [socket, sessionId, userId]
+  );
+
+  // Presence updates (with debouncing)
+  const emitPresenceUpdate = useCallback(
+    (currentFile?: { fileId: string; filePath: string }, isTyping: boolean = false) => {
+      if (!socket || !userId) return;
+
+      // Update last activity
+      lastActivityRef.current = Date.now();
+
+      // Debounce presence updates (500ms)
+      if (presenceDebounceRef.current) {
+        clearTimeout(presenceDebounceRef.current);
+      }
+
+      presenceDebounceRef.current = setTimeout(() => {
+        socket.emit("presence:update", {
+          sessionId,
+          userId,
+          userName: userName || "Anonymous",
+          currentFile,
+          isTyping,
+          status: "active",
+        });
+      }, 500);
+    },
+    [socket, sessionId, userId, userName]
+  );
+
+  // File operations
+  const emitFileAction = useCallback(
+    (payload: Omit<FileActionPayload, "userId" | "userName" | "sessionId">) => {
+      if (!socket || !userId) return;
+
+      socket.emit("file:action", {
+        ...payload,
+        sessionId,
+        userId,
+        userName: userName || "Anonymous",
+      });
+    },
+    [socket, sessionId, userId, userName]
+  );
+
+  const emitFileOpen = useCallback(
+    (fileId: string, filePath: string) => {
+      if (!socket || !userId) return;
+
+      socket.emit("file:open", { fileId, filePath });
+      
+      // Also update presence
+      emitPresenceUpdate({ fileId, filePath }, false);
+    },
+    [socket, userId, emitPresenceUpdate]
+  );
+
+  // File locking
+  const emitFileLock = useCallback(
+    (fileId: string, action: "acquire" | "release", lockType: "soft" | "hard" = "soft") => {
+      if (!socket || !userId) return;
+
+      socket.emit("file:lock", {
+        sessionId,
+        userId,
+        userName: userName || "Anonymous",
+        fileId,
+        action,
+        lockType,
+      });
+    },
+    [socket, sessionId, userId, userName]
+  );
+
+  // Activity logging
+  const emitActivity = useCallback(
+    (type: ActivityEvent["type"], description: string, metadata?: any) => {
+      if (!socket || !userId) return;
+
+      socket.emit("activity:log", {
+        sessionId,
+        userId,
+        userName: userName || "Anonymous",
+        type,
+        description,
+        metadata,
+      });
+    },
+    [socket, sessionId, userId, userName]
+  );
+
+  // Typing detection for collision
+  const emitTypingStart = useCallback(
+    (fileId: string, lineNumber: number) => {
+      if (!socket || !userId) return;
+
+      socket.emit("typing:start", {
+        sessionId,
+        userId,
+        userName: userName || "Anonymous",
+        fileId,
+        lineNumber,
+      });
+    },
+    [socket, sessionId, userId, userName]
+  );
+
+  // WebContainer commands (from your existing code)
+  const emitWebContainerCommand = useCallback(
+    (command: "start" | "stop" | "restart") => {
+      if (!socket || !userId) return;
+
+      socket.emit("webcontainer:command", {
+        sessionId,
+        userId,
+        userName: userName || "Anonymous",
         command,
         timestamp: Date.now(),
       });
@@ -156,14 +418,31 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
   );
 
   return {
+    // Socket state
     socket,
     isConnected,
-    participants,
+    
+    // Legacy support
+    participants, // Keep for backward compatibility
+    
+    // New Redis-backed awareness state
+    presences, // Use this instead of participants for awareness features
+    remoteCursors,
+    activities,
+    fileLocks,
+    collisions,
+    userColor: userId ? getUserColor(userId) : "#3B82F6",
+    
+    // Emit functions
     emitEditorChange,
     emitCursorMove,
+    emitCursorHide,
+    emitPresenceUpdate,
     emitFileAction,
     emitFileOpen,
-    emitPresenceUpdate,
-    emitFileChange,emitWebContainerCommand
+    emitFileLock,
+    emitActivity,
+    emitTypingStart,
+    emitWebContainerCommand,
   };
 }
