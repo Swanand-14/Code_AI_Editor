@@ -55,6 +55,50 @@ export interface UserPresencePayload {
   status: "online" | "away" | "offline";
 }
 
+export interface ParticipantInfo {
+  userId: string;
+  userName: string;
+  userImage?: string;
+  role: string;
+  socketId: string;
+  joinedAt: number;
+  lastActivity: number;
+  activeFile?: string;
+  socketIds: Set<string>;
+  cursor?: {
+    fileId: string;
+    position: { lineNumber: number; column: number };
+  };
+}
+
+export interface ActivityLogEntry {
+  id: string;
+  userId: string;
+  userName: string;
+  action: string;
+  details?: string;
+  timestamp: number;
+  fileId?: string;
+  filePath?: string;
+}
+
+type SerializedParticipant = {
+  userId: string;
+  userName: string;
+  userImage?: string;
+  role: string;
+  socketId: string;
+  joinedAt: number;
+  lastActivity: number;
+  activeFile?: string;
+  cursor?: {
+    fileId: string;
+    position: { lineNumber: number; column: number };
+  };
+};
+
+
+
 // 🔥 NEW: WebContainer state management
 interface WebContainerState {
   hostSocketId: string | null;
@@ -66,6 +110,236 @@ interface WebContainerState {
 }
 
 const sessionStates = new Map<string, WebContainerState>();
+const sessionParticipants = new Map<string, Map<string, ParticipantInfo>>();
+const sessionActivityLogs = new Map<string, ActivityLogEntry[]>();
+const recentActivityIds = new Map<string, Set<string>>();
+
+function isValidParticipant(userId?:string,userName?:string):boolean{
+  if(!userId || !userName){
+    console.warn("Invalid participant,missing username or userid",{userId,userName})
+    return false;
+  }
+  if(userName==="Anonymous"){
+    console.warn("Rejecting anomynous user ")
+    return false;
+  }
+
+   if (userId.startsWith("guest-")) {
+    console.warn("❌ Rejecting guest user without proper auth");
+    return false;
+  }
+  
+  return true;
+}
+function serializeParticipant(p: ParticipantInfo) {
+  return {
+    userId: p.userId,
+    userName: p.userName,
+    userImage: p.userImage,
+    role: p.role,
+    socketId: Array.from(p.socketIds)[0], // Send first socket for compatibility
+    joinedAt: p.joinedAt,
+    lastActivity: p.lastActivity,
+    activeFile: p.activeFile,
+    cursor: p.cursor,
+  };
+}
+function addParticipant(sessionId: string, participant: ParticipantInfo): boolean {
+  if (!sessionParticipants.has(sessionId)) {
+    sessionParticipants.set(sessionId, new Map());
+  }
+  
+  const participants = sessionParticipants.get(sessionId)!;
+  const existing = participants.get(participant.userId);
+  if (existing) {
+    console.log(`♻️ Updating existing participant: ${participant.userName} (${participant.userId})`);
+    const isNewSocket = !existing.socketIds.has(Array.from(participant.socketIds)[0]);
+
+    // Update socketId for reconnection, keep other data
+    // Update name in case it changed
+    if (isNewSocket) {
+      // Add the new socket to the set
+      participant.socketIds.forEach(socketId => existing.socketIds.add(socketId));
+      existing.lastActivity = Date.now();
+      existing.userName = participant.userName; 
+      existing.userImage = participant.userImage || existing.userImage;
+      
+      console.log(`♻️ Added new connection for ${existing.userName}: ${Array.from(participant.socketIds)[0]}`);
+      console.log(`   Total connections for ${existing.userName}: ${existing.socketIds.size}`);
+      
+      return false; // Not a new join (user already existed)
+    } else {
+      console.log(`⚠️ Socket already tracked for ${existing.userName}`);
+      return false;
+    }
+  }
+  // 🔥 FIX: Use userId as key (prevents duplicates)
+  participants.set(participant.userId, participant);
+  
+  console.log(`✅ Participant added: ${participant.userName} (${participant.userId})`);
+  console.log(`   Initial connections: ${participant.socketIds.size}`);
+  console.log(`   Total participants: ${participants.size}`);
+  return true;
+}
+
+async function enrichParticipantsWithImages(
+  sessionId: string
+): Promise<SerializedParticipant[]> {
+  const participants = sessionParticipants.get(sessionId);
+  if (!participants) return [];
+
+  const enrichedParticipants: SerializedParticipant[] = [];
+
+  for (const participant of participants.values()) {
+    let userImage = participant.userImage;
+
+    // If image is missing, fetch it from database
+    if (!userImage && participant.userId && !participant.userId.startsWith("guest-")) {
+      try {
+        const user = await prisma.user.findUnique({
+          where: { id: participant.userId },
+          select: { image: true },
+        });
+        userImage = user?.image || undefined;
+        
+        // Update in-memory cache
+        participant.userImage = userImage;
+      } catch (error) {
+        console.error(`Failed to fetch image for user ${participant.userId}:`, error);
+      }
+    }
+
+    enrichedParticipants.push(serializeParticipant(participant));
+  }
+
+  return enrichedParticipants;
+}
+function removeParticipant(sessionId: string, socketId: string): { 
+  participant: ParticipantInfo | null; 
+  wasLastConnection: boolean;
+} {
+  const participants = sessionParticipants.get(sessionId);
+  if (!participants) {
+    console.warn(`⚠️ No participants map for session ${sessionId}`);
+    return { participant: null, wasLastConnection: false };
+  }
+  
+  console.log(`🔍 Searching for socketId ${socketId} in ${participants.size} participants`);
+  
+  let foundParticipant: ParticipantInfo | null = null;
+  let wasLastConnection = false;
+  
+  for (const [userId, participant] of participants.entries()) {
+    if (participant.socketIds.has(socketId)) {
+      foundParticipant = participant;
+      
+      // 🔥 Remove this socket from the set
+      participant.socketIds.delete(socketId);
+      
+      console.log(`✅ Removed socket ${socketId} from ${participant.userName}`);
+      console.log(`   Remaining connections: ${participant.socketIds.size}`);
+      
+      // 🔥 If no connections left, remove participant entirely
+      if (participant.socketIds.size === 0) {
+        participants.delete(userId);
+        wasLastConnection = true;
+        console.log(`✅ LAST CONNECTION - Removed ${participant.userName} from session`);
+        console.log(`   Remaining participants: ${participants.size}`);
+      } else {
+        console.log(`⏳ ${participant.userName} still has ${participant.socketIds.size} connection(s)`);
+      }
+      
+      break;
+    }
+  }
+  
+  if (!foundParticipant) {
+    console.error(`❌ Could not find participant with socketId ${socketId}`);
+  }
+  
+  return { participant: foundParticipant, wasLastConnection };
+}
+function getParticipants(sessionId: string) {
+  const participants = sessionParticipants.get(sessionId);
+  if (!participants) return [];
+  
+  // Serialize for broadcasting (convert Set to array)
+  return Array.from(participants.values()).map(serializeParticipant);
+}
+
+function isActivityDuplicate(sessionId: string, activityId: string): boolean {
+  if (!recentActivityIds.has(sessionId)) {
+    recentActivityIds.set(sessionId, new Set());
+  }
+  
+  const ids = recentActivityIds.get(sessionId)!;
+  
+  if (ids.has(activityId)) {
+    console.log(`⚠️ Duplicate activity blocked: ${activityId}`);
+    return true;
+  }
+  
+  // Add to set
+  ids.add(activityId);
+  
+  // Clean up old IDs (keep last 100)
+  if (ids.size > 100) {
+    const oldIds = Array.from(ids).slice(0, ids.size - 100);
+    oldIds.forEach(id => ids.delete(id));
+  }
+  
+  return false;
+}
+
+function logActivity(
+  sessionId: string,
+  userId: string,
+  userName: string,
+  action: string,
+  details?: string,
+  fileId?: string,
+  filePath?: string
+): ActivityLogEntry | null {
+  if (!sessionActivityLogs.has(sessionId)) {
+    sessionActivityLogs.set(sessionId, []);
+  }
+  
+  const logs = sessionActivityLogs.get(sessionId)!;
+  
+  // 🔥 FIX: Create stable ID based on content + timestamp (rounded to second)
+  const timestamp = Date.now();
+  const timestampSecond = Math.floor(timestamp / 1000) * 1000; // Round to second
+  const activityId = `${userId}-${action}-${timestampSecond}`;
+  
+  // 🔥 FIX: Check for duplicate
+  if (isActivityDuplicate(sessionId, activityId)) {
+    return null; // Skip duplicate
+  }
+  
+  const entry: ActivityLogEntry = {
+    id: `${timestamp}-${userId}-${Math.random().toString(36).substr(2, 9)}`, // Unique display ID
+    userId,
+    userName,
+    action,
+    details,
+    timestamp,
+    fileId,
+    filePath,
+  };
+  
+  logs.unshift(entry);
+  
+  if (logs.length > 50) {
+    logs.length = 50;
+  }
+  
+  console.log(`📝 Activity logged: ${userName} ${action}`);
+  return entry;
+}
+
+function getActivityLogs(sessionId: string): ActivityLogEntry[] {
+  return sessionActivityLogs.get(sessionId) || [];
+}
 
 let io:SocketIOServer|null = null;
 
@@ -73,6 +347,7 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
     if(io){
         return io;
     }
+
 
     io = new SocketIOServer(httpServer,{
         cors:{
@@ -92,13 +367,34 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
         // ============================================
         socket.on("collab:join",async(data:{sessionId:string;userId?:string;userName?:string})=>{
             const {sessionId,userId,userName} = data;
+            console.log("\n📥 JOIN REQUEST:", {
+              sessionId,
+              userId,
+              userName,
+              socketId: socket.id
+            });
             try {
                 const session = await prisma.collabSession.findUnique({
                   where: { sessionId },
+                  select: {
+                    id: true,
+                    sessionId: true,
+                    isActive: true,
+                    expiresAt: true,
+                    hostId: true, // 🔥 NEW: Get host ID
+                  }
                 });
 
                 if (!session || !session.isActive || new Date() > session.expiresAt) {
                   socket.emit("collab:error", { message: "Session not found or expired" });
+                  return;
+                }
+
+                if (!isValidParticipant(userId, userName)) {
+                  console.error("❌ REJECTED: Invalid participant data");
+                  socket.emit("collab:error", { 
+                    message: "Authentication required. Please wait for auth to complete." 
+                  });
                   return;
                 }
 
@@ -136,19 +432,126 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
                   })),
                 });
 
+                const isHost = session.hostId === userId;
+                const role = isHost ? "Host" : "Guest";
+
+                console.log(`🎭 Role determined: ${role} (hostId: ${session.hostId}, userId: ${userId})`);
+                const userWithImage = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { image: true }
+    });
+
+                const participantInfo: ParticipantInfo = {
+                  userId: socket.userId,
+                  userName: socket.userName,
+                  role: role, 
+                  socketIds: new Set([socket.id]),
+                  joinedAt: Date.now(),
+                  lastActivity: Date.now(),
+                  socketId: socket.id,
+                  userImage: userWithImage?.image || undefined,
+                };
+
+                const isNewJoin = addParticipant(sessionId, participantInfo);
+                
+                // Log join activity
+               let activityEntry = null;
+    if (isNewJoin) {
+      activityEntry = logActivity(
+        sessionId,
+        participantInfo.userId,
+        participantInfo.userName,
+        "joined",
+        `Joined as ${role}`
+      );
+    } else {
+      console.log(`⏭️ Skipping join activity (user already in session)`);
+    }
+
+
                 // Notify others in the room
+                const allParticipants = await enrichParticipantsWithImages(sessionId);
+                console.log(`📢 Broadcasting ${allParticipants.length} participants to session`);
+                
+                io!.to(sessionId).emit("collab:participants-updated", {
+                  participants: allParticipants,
+                });
+                
+                // Send activity logs to the new user
+                socket.emit("collab:activity-logs", {
+                  logs: getActivityLogs(sessionId),
+                });
+                if (activityEntry) {
+      socket.to(sessionId).emit("collab:activity-new", activityEntry);
+    }
+
+                // Broadcast activity to others (not yourself)
+                
+                // Notify others using old system
                 socket.to(sessionId).emit("collab:user-joined", {
                   userId: socket.userId,
                   userName: socket.userName,
                   timestamp: Date.now(),
                 });
 
-                console.log(`✅ User ${socket.userName} joined session ${sessionId}`);
+                console.log(`✅ User ${socket.userName} joined session ${sessionId} as ${role}\n`);
+
             } catch (error) {
                 console.error("Error joining collab session:", error);
                 socket.emit("collab:error", { message: "Failed to join session" });
             }
         });
+
+//         socket.on("collab:request-participants", (data: { sessionId: string }) => {
+//   const participants = getParticipants(data.sessionId);
+//   socket.emit("collab:participants-updated", { participants });
+// });
+
+socket.on("collab:request-participants", async (data: { sessionId: string }) => {
+  const participants = await enrichParticipantsWithImages(data.sessionId);
+  socket.emit("collab:participants-updated", { participants });
+});
+
+
+
+
+
+        
+      
+      
+
+socket.on("collab:request-activity", (data: { sessionId: string }) => {
+  const logs = getActivityLogs(data.sessionId);
+  socket.emit("collab:activity-logs", { logs });
+
+});
+        socket.on("collab:update-activity", (data: {
+  sessionId: string;
+  activeFile?: string;
+  cursor?: { fileId: string; position: any };
+}) => {
+  if (!socket.sessionId || !socket.userId) return;
+  
+  const participants = sessionParticipants.get(socket.sessionId);
+  if (!participants) return;
+  
+  const participant = participants.get(socket.userId);
+  if (participant) {
+    participant.lastActivity = Date.now();
+    if (data.activeFile !== undefined) participant.activeFile = data.activeFile;
+    if (data.cursor !== undefined) participant.cursor = data.cursor;
+    
+    // Broadcast updated participant info
+    socket.to(socket.sessionId).emit("collab:participant-activity", {
+      userId: socket.userId,
+      activeFile: participant.activeFile,
+      cursor: participant.cursor,
+      lastActivity: participant.lastActivity,
+    });
+  }
+});
+
+
 
         // ============================================
         // COLLAB: Editor & File Operations
@@ -162,6 +565,23 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
             userId: socket.userId,
             userName: socket.userName,
           });
+
+          if (socket.sessionId && socket.userId && socket.userName) {
+    const activityEntry = logActivity(
+      socket.sessionId,
+      socket.userId,
+      socket.userName,
+      "edited file",
+      `Modified ${payload.filePath}`,
+      payload.fileId,
+      payload.filePath
+    );
+      if (activityEntry) {
+      socket.to(socket.sessionId).emit("collab:activity-new", activityEntry);
+    }
+   
+    
+  }
         });
 
         socket.on("cursor:move", (payload: CursorPositionPayload) => {
@@ -182,6 +602,30 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
             userId: socket.userId,
             userName: socket.userName,
           });
+
+          if (socket.sessionId && socket.userId && socket.userName) {
+    const actionText = {
+      create: "created",
+      delete: "deleted",
+      rename: "renamed",
+    }[payload.action];
+    
+   const activityEntry =  logActivity(
+      socket.sessionId,
+      socket.userId,
+      socket.userName,
+      actionText,
+      payload.action === "rename" 
+        ? `${payload.filePath} → ${payload.newPath}`
+        : payload.filePath,
+      undefined,
+      payload.filePath
+    );
+    
+     if (activityEntry) {
+      socket.to(socket.sessionId).emit("collab:activity-new", activityEntry);
+    }
+  }
         });
 
         socket.on("file:open", (payload: { fileId: string; filePath: string }) => {
@@ -385,59 +829,88 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
         // DISCONNECT - Cleanup
         // ============================================
         socket.on("disconnect", async () => {
-          console.log("🔌 Client disconnected:", socket.id);
+  console.log("\n🔌 DISCONNECT:", socket.id);
+  console.log("   userId:", socket.userId);
+  console.log("   userName:", socket.userName);
+  console.log("   sessionId:", socket.sessionId);
 
-          if (socket.sessionId && socket.userId) {
-            // Notify others in the room
-            socket.to(socket.sessionId).emit("collab:user-left", {
-              userId: socket.userId,
-              userName: socket.userName,
-              timestamp: Date.now(),
-            });
-
-            // Update last seen in database
-            if (socket.userId.startsWith("guest-") === false) {
-              await prisma.collabParticipant.updateMany({
-                where: { 
-                  sessionId: socket.sessionId,
-                  userId: socket.userId,
-                },
-                data: { lastSeenAt: new Date() },
-              });
-            }
-
-            // 🔥 NEW: Check if disconnecting socket was the host
-            const state = sessionStates.get(socket.sessionId);
-            if (state && state.hostSocketId === socket.id) {
-              console.log(`⚠️ Host disconnected from session ${socket.sessionId}`);
-              
-              // Notify guests
-              io!.to(socket.sessionId).emit("webcontainer:host-disconnected", {
-                sessionId: socket.sessionId,
-                message: "Host has disconnected. WebContainer is paused.",
-              });
-              
-              // Mark as inactive but keep state for potential reconnection
-              state.isRunning = false;
-              state.lastUpdate = Date.now();
-              
-              // Clear state after 5 minutes of inactivity
-              setTimeout(() => {
-                const currentState = sessionStates.get(socket.sessionId!);
-                if (currentState && currentState.hostSocketId === socket.id) {
-                  sessionStates.delete(socket.sessionId!);
-                  console.log(`🗑️ Cleared state for session ${socket.sessionId}`);
-                  
-                  // Notify remaining users
-                  io!.to(socket.sessionId!).emit("webcontainer:session-expired", {
-                    sessionId: socket.sessionId,
-                    message: "Host has been offline for too long. Session state cleared.",
-                  });
-                }
-              }, 5 * 60 * 1000); // 5 minutes
-            }
-          }
+  if (socket.sessionId && socket.userId) {
+    // 🔥 CRITICAL: Check if this was the last connection
+    const { participant, wasLastConnection } = removeParticipant(socket.sessionId, socket.id);
+    
+    if (participant) {
+      if (wasLastConnection) {
+        // 🔥 Only log "left" activity if ALL connections closed
+        console.log(`👋 ${participant.userName} fully disconnected (all tabs closed)`);
+        
+        const activityEntry = logActivity(
+          socket.sessionId,
+          participant.userId,
+          participant.userName,
+          "left",
+          "Left the session"
+        );
+        
+        const updatedParticipants = getParticipants(socket.sessionId);
+        console.log(`📢 Broadcasting ${updatedParticipants.length} remaining participants`);
+        
+        io!.to(socket.sessionId).emit("collab:participants-updated", {
+          participants: updatedParticipants,
         });
+        
+        if (activityEntry) {
+          io!.to(socket.sessionId).emit("collab:activity-new", activityEntry);
+        }
+
+        socket.to(socket.sessionId).emit("collab:user-left", {
+          userId: socket.userId,
+          userName: socket.userName,
+          timestamp: Date.now(),
+        });
+      } else {
+        // 🔥 User still has other connections, no activity needed
+        console.log(`⏳ ${participant.userName} still connected (${participant.socketIds.size} tab(s) remaining)`);
+      }
+    } else {
+      console.error("❌ Failed to remove participant from tracking");
+    }
+
+    if (socket.userId && !socket.userId.startsWith("guest-")) {
+      await prisma.collabParticipant.updateMany({
+        where: { 
+          sessionId: socket.sessionId,
+          userId: socket.userId,
+        },
+        data: { lastSeenAt: new Date() },
+      });
+    }
+
+    // WebContainer cleanup (keep existing code)
+    const state = sessionStates.get(socket.sessionId);
+    if (state && state.hostSocketId === socket.id) {
+      console.log(`⚠️ Host disconnected from session ${socket.sessionId}`);
+      io!.to(socket.sessionId).emit("webcontainer:host-disconnected", {
+        sessionId: socket.sessionId,
+        message: "Host has disconnected. WebContainer is paused.",
+      });
+      state.isRunning = false;
+      state.lastUpdate = Date.now();
+
+      setTimeout(() => {
+        const currentState = sessionStates.get(socket.sessionId!);
+        if (currentState && currentState.hostSocketId === socket.id) {
+          sessionStates.delete(socket.sessionId!);
+          io!.to(socket.sessionId!).emit("webcontainer:session-expired", {
+            sessionId: socket.sessionId,
+            message: "Host has been offline for too long. Session state cleared.",
+          });
+        }
+      }, 5 * 60 * 1000);
+    }
+  }
+  
+  console.log("✅ Disconnect cleanup complete\n");
+});
     });
 
     return io;
@@ -459,4 +932,11 @@ export function clearSessionState(sessionId: string): void {
 
 export function getAllSessionStates(): Map<string, WebContainerState> {
   return new Map(sessionStates);
+}
+
+export function cleanupSessionParticipants(sessionId: string): void {
+  sessionParticipants.delete(sessionId);
+  sessionActivityLogs.delete(sessionId);
+  recentActivityIds.delete(sessionId);
+  console.log(`🗑️ Cleaned up participants/activity for session ${sessionId}`);
 }

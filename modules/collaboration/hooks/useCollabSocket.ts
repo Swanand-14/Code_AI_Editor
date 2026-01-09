@@ -59,9 +59,32 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [participants, setParticipants] = useState<CollabUser[]>([]);
+  const recentActivityIds = useRef<Set<string>>(new Set());
+  const hasRequestedInitialData = useRef(false); // 🔥 NEW: Prevent double request
+
   const socketRef = useRef<Socket | null>(null);
+  const hasJoinedRef = useRef(false);
 
   useEffect(() => {
+     console.log("\n🚀 useCollabSocket effect triggered");
+    console.log("   userId:", userId);
+    console.log("   userName:", userName);
+    console.log("   sessionId:", sessionId);
+
+    // 🔥 CRITICAL FIX: Don't connect if userId/userName not ready
+    if (!userId || !userName || userName === "Anonymous") {
+      console.warn("⏳ Waiting for auth data...");
+      return;
+    }
+
+    // 🔥 CRITICAL FIX: Prevent duplicate connections
+    if (socketRef.current?.connected) {
+      console.log("♻️ Socket already connected, skipping");
+      return;
+    }
+
+    console.log("✅ Auth data ready, initializing socket");
+
     // Initialize socket connection
     const socketInstance = io({
       path: "/api/socket",
@@ -77,16 +100,25 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
       setIsConnected(true);
 
       // Join the collaboration session
-      socketInstance.emit("collab:join", {
-        sessionId,
-        userId,
-        userName: userName || "Anonymous",
-      });
+      if (!hasJoinedRef.current) {
+        console.log("📤 Emitting collab:join with:", { sessionId, userId, userName });
+        
+        socketInstance.emit("collab:join", {
+          sessionId,
+          userId,
+          userName,
+        });
+        
+        hasJoinedRef.current = true;
+      } else {
+        console.log("⚠️ Already joined, skipping join emission");
+      }
     });
 
     socketInstance.on("disconnect", () => {
       console.log("❌ Disconnected from collaboration server");
       setIsConnected(false);
+      hasJoinedRef.current = false;
     });
 
     // Session events
@@ -97,10 +129,14 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
 
     socketInstance.on("collab:user-joined", (data: { userId: string; userName: string }) => {
       console.log("👤 User joined:", data.userName);
-      setParticipants((prev) => [
-        ...prev,
-        { userId: data.userId, userName: data.userName, role: "editor" },
-      ]);
+      setParticipants((prev) => {
+        // 🔥 FIX: Check if already exists
+        if (prev.some(p => p.userId === data.userId)) {
+          console.log("⚠️ User already in list, skipping");
+          return prev;
+        }
+        return [...prev, { userId: data.userId, userName: data.userName, role: "editor" }];
+      });
     });
 
     socketInstance.on("collab:user-left", (data: { userId: string; userName: string }) => {
@@ -114,7 +150,10 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
 
     // Cleanup
     return () => {
+      console.log("🧹 Cleaning up socket connection");
+      hasJoinedRef.current = false;
       socketInstance.disconnect();
+      socketRef.current = null;
     };
   }, [sessionId, userId, userName]);
 
