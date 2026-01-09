@@ -31,6 +31,8 @@ import { useCollabWebContainer } from "@/modules/webContainers/hooks/useCollabWe
 import { WebContainerPreview } from "@/modules/webContainers/components/WebContainerPreview";
 import { HostOfflineBanner } from "./HostOfflineBanner";
 import TerminalComponent, { TerminalRef } from "@/modules/webContainers/components/terminal";
+import { useCollabParticipants } from "../hooks/useCollabParticipants";
+import { ParticipantsPanel } from "./ParticipantsPanel";
 
 interface CollabPlaygroundProps {
   session: CollabSessionData;
@@ -39,7 +41,7 @@ interface CollabPlaygroundProps {
 export function CollabPlayground({ session }: CollabPlaygroundProps) {
   const [isJoining, setIsJoining] = useState(true);
   const [joinError, setJoinError] = useState<string | null>(null);
-  const [user, setUser] = useState<{ id: string; name: string } | null>(null);
+  const [user, setUser] = useState<{ id: string; name: string,image?:string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   
   // 🔥 NEW: Preview toggle state
@@ -70,11 +72,23 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
   } = useFileExplorer();
 
   // Initialize WebSocket connection
-  const { socket, isConnected, participants, emitFileOpen, emitFileChange, emitFileAction } = useCollabSocket(
+  const { socket, isConnected, participants:oldparticipants, emitFileOpen, emitFileChange, emitFileAction } = useCollabSocket(
     session.sessionId,
     user?.id,
     user?.name
   );
+
+  const { 
+  participants, 
+  activityLogs, 
+  updateActivity 
+} = useCollabParticipants({
+  socket,
+  sessionId: session.sessionId,
+  currentUserId: user?.id,
+});
+
+  
   const { saveWorkSpace } = useWorkspaceAutoSave(session.sessionId, templateData, user?.id, true);
 
   // 🔥 NEW: Determine if current user is host
@@ -433,6 +447,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
         /^\//, ""
       );
       emitFileOpen(file.id, filePath);
+      updateActivity(filePath);
     },
     [openFile, emitFileOpen]
   );
@@ -596,7 +611,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
         const currentUserData = await currentUser();
         if (!mounted) return;
         setUser(
-          currentUserData ? { id: currentUserData.id!, name: currentUserData.name! } : null
+          currentUserData ? { id: currentUserData.id!, name: currentUserData.name!,image: currentUserData.image } : null
         );
 
         const result = await joinCollabSession(session.sessionId);
@@ -754,6 +769,8 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
               onRenameFolder={wrappedHandleRenameFolder}
             />
           )}
+
+
 
           <div className="flex flex-1 flex-col">
             <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border px-4">
@@ -1093,6 +1110,12 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
               </>
             )}
           </div>
+
+           <ParticipantsPanel
+          participants={participants}
+          activityLogs={activityLogs}
+          currentUserId={user?.id}
+        />
         </div>
       </SidebarProvider>
     </TooltipProvider>
