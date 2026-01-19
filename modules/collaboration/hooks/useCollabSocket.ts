@@ -33,6 +33,7 @@ export interface CursorPositionPayload {
   userId?: string;
   userName?: string;
   fileId: string;
+  filePath: string;
   position: {
     lineNumber: number;
     column: number;
@@ -162,28 +163,65 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
     socket?.emit("editor:change", { ...payload, sessionId, userId, userName });
   };
 
-  const emitCursorMove = (payload: Omit<CursorPositionPayload, "userId" | "userName" | "sessionId">) => {
-    socket?.emit("cursor:move", { ...payload, sessionId, userId, userName });
+  const emitCursorMove = useCallback((payload: Omit<CursorPositionPayload, "userId" | "userName" | "sessionId">) => {
+
+    const currentSocket = socketRef.current;
+    if (!currentSocket || !currentSocket.connected) {
+      console.warn('[Socket] ⚠️ Cannot emit cursor: socket not connected');
+      return;
+    }
+  // 🔥 ADD: Validation
+  if (!payload.fileId || !payload.filePath) {
+    console.warn('[Socket] ⚠️ Cannot emit cursor: missing fileId or filePath');
+    return;
+  }
+
+  const fullPayload = { 
+    ...payload, 
+    sessionId, 
+    userId, 
+    userName 
   };
 
-  const emitFileAction = (payload: Omit<FileActionPayload, "userId" | "userName" | "sessionId">) => {
-    socket?.emit("file:action", { ...payload, sessionId, userId, userName });
-  };
-  const emitFileChange = (fileId: string, content: string, action: 'update' | 'delete') => {
-    socket.emit('file:change', { fileId, content, action });
-  };
+  // 🔥 ADD: Log emission
+  console.log('[Socket Emit] 📤 cursor:move', {
+    sessionId,
+    userId,
+    userName,
+    fileId: payload.fileId,
+    filePath: payload.filePath,
+    line: payload.position.lineNumber,
+    column: payload.position.column
+  });
+  console.log("🔍 Socket status:", {
+  connected: currentSocket?.connected,
+  id: currentSocket?.id,
+  hasEventListeners: socket?.hasListeners("cursor:move")
+});
 
-  const emitFileOpen = (fileId: string, filePath: string) => {
-    socket?.emit("file:open", { fileId, filePath });
-  };
+  currentSocket?.emit("cursor:move", fullPayload);
 
-  const emitPresenceUpdate = (status: "online" | "away" | "offline", activeFile?: string) => {
-    socket?.emit("presence:update", { status, activeFile });
-  };
+  
+},  [sessionId, userId, userName]);
+
+  const emitFileAction = useCallback((payload: Omit<FileActionPayload, "userId" | "userName" | "sessionId">) => {
+    socketRef.current?.emit("file:action", { ...payload, sessionId, userId, userName });
+  },[sessionId, userId, userName]);
+  const emitFileChange = useCallback((fileId: string, content: string, action: 'update' | 'delete') => {
+    socketRef.current?.emit('file:change', { fileId, content, action });
+  },[sessionId, userId, userName]);
+
+  const emitFileOpen = useCallback((fileId: string, filePath: string) => {
+    socketRef.current?.emit("file:open", { fileId, filePath });
+  },[]);
+
+  const emitPresenceUpdate = useCallback((status: "online" | "away" | "offline", activeFile?: string) => {
+    socketRef.current?.emit("presence:update", { status, activeFile });
+  },[]);
 
   const emitWebContainerCommand = useCallback(
     (command: "start" | "stop" | "restart") => {
-      socket?.emit("webcontainer:command", {
+      socketRef.current?.emit("webcontainer:command", {
         sessionId,
         userId,
         userName,

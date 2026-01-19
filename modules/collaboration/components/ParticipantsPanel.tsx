@@ -133,9 +133,9 @@ export function ParticipantsPanel({
                         {participant.role}
                       </span>
                     </div>
-                    {participant.activeFile && (
+                    {participant.userId!==currentUserId && participant.activeFile && (
                       <p className="text-xs text-muted-foreground truncate mt-0.5">
-                        📄 {participant.activeFile}
+                         {participant.activeFile}
                       </p>
                     )}
                   </div>

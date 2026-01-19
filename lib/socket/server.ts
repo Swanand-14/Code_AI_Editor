@@ -24,6 +24,7 @@ export interface CursorPositionPayload {
   userId: string;
   userName: string;
   fileId: string;
+  filePath: string;
   position: {
     lineNumber: number;
     column: number;
@@ -584,14 +585,37 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
   }
         });
 
+        socket.onAny((eventName, ...args) => {
+  console.log(`📨 [Server] Received event: ${eventName}`, {
+    from: socket.userName,
+    sessionId: socket.sessionId,
+    argsCount: args.length
+  });
+});
+
         socket.on("cursor:move", (payload: CursorPositionPayload) => {
           if (!socket.sessionId) return;
+          console.log(`[Server] 👆 Cursor from ${socket.userName || 'Unknown'}:`, {
+    file: payload.filePath,
+    line: payload.position.lineNumber,
+    column: payload.position.column,
+    hasSelection: !!payload.selection,
+    session: socket.sessionId
+  });
 
-          socket.to(socket.sessionId).emit("cursor:move", {
-            ...payload,
-            userId: socket.userId,
-            userName: socket.userName,
-          });
+  // 🔥 FIX: Use consistent event name "collab:remote-cursor"
+  // 🔥 FIX: Include filePath in broadcast
+  socket.to(socket.sessionId).emit("collab:remote-cursor", {
+    userId: socket.userId,
+    userName: socket.userName,
+    fileId: payload.fileId,
+    filePath: payload.filePath, // ✅ Now included!
+    position: payload.position,
+    selection: payload.selection,
+    timestamp: Date.now() // ✅ Added for staleness detection
+  });
+
+  console.log(`[Server] 📡 Broadcasted cursor to session ${socket.sessionId} (excluding ${socket.userName})`);
         });
 
         socket.on("file:action", (payload: FileActionPayload) => {
@@ -629,15 +653,36 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
         });
 
         socket.on("file:open", (payload: { fileId: string; filePath: string }) => {
-          if (!socket.sessionId) return;
+  if (!socket.sessionId || !socket.userId) return;
 
-          socket.to(socket.sessionId).emit("user:file-changed", {
-            userId: socket.userId,
-            userName: socket.userName,
-            fileId: payload.fileId,
-            filePath: payload.filePath,
-          });
-        });
+  // 🔥 NEW: Update participant's active file
+  const participants = sessionParticipants.get(socket.sessionId);
+  if (participants) {
+    const participant = participants.get(socket.userId);
+    if (participant) {
+      participant.activeFile = payload.filePath;
+      participant.lastActivity = Date.now();
+      
+      console.log(`📂 ${socket.userName} opened: ${payload.filePath}`);
+      
+      // 🔥 Broadcast updated participant info
+      socket.to(socket.sessionId).emit("collab:participant-activity", {
+        userId: socket.userId,
+        userName: socket.userName,
+        activeFile: payload.filePath,
+        lastActivity: participant.lastActivity,
+      });
+    }
+  }
+
+  // Keep the existing broadcast for backward compatibility
+  socket.to(socket.sessionId).emit("user:file-changed", {
+    userId: socket.userId,
+    userName: socket.userName,
+    fileId: payload.fileId,
+    filePath: payload.filePath,
+  });
+});
 
         socket.on("presence:update", (payload: Partial<UserPresencePayload>) => {
           if (!socket.sessionId) return;

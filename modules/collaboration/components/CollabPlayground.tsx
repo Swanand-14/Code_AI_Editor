@@ -18,6 +18,8 @@ import { TemplateFileTree } from "@/modules/playground/components/playgroundExpl
 import { useFileExplorer } from "@/modules/playground/hooks/useFileExplorer";
 import { Button } from "@/components/ui/button";
 import { generateFileId } from "@/modules/playground/lib/index";
+import { useRemoteCursors } from "../hooks/useRemoteCursors";
+import { useProximityWarnings } from "../hooks/useProximityWarnings";
 import {
   Tooltip,
   TooltipContent,
@@ -43,6 +45,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
   const [joinError, setJoinError] = useState<string | null>(null);
   const [user, setUser] = useState<{ id: string; name: string,image?:string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [localCursorPosition,setLocalCursorPosition] = useState<{lineNumber:number;column:number}>({lineNumber:1,column:1});
   
   // 🔥 NEW: Preview toggle state
   const [showPreview, setShowPreview] = useState(false);
@@ -103,6 +106,25 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
     userName: user?.name,
     terminalRef,
   });
+  const { remoteCursors, CursorsInCurrentFile } = useRemoteCursors({
+  socket,
+  sessionId: session.sessionId,
+  currentUserId: user?.id,
+  currentFileId: activeFileId || undefined, // Pass current file
+});
+
+useProximityWarnings({
+  remoteCursors: CursorsInCurrentFile,
+  localCursorLine: localCursorPosition.lineNumber,
+  enabled: true, // Set to false to disable warnings
+});
+
+// 🔥 DEBUG: Log when cursors update
+useEffect(() => {
+  if (CursorsInCurrentFile.length > 0) {
+    console.log("👥 Remote cursors in current file:", CursorsInCurrentFile);
+  }
+}, [CursorsInCurrentFile]);
 
   // 🔥 NEW: Listen for remote editor changes at the parent level
   useEffect(() => {
@@ -983,27 +1005,32 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
                   {/* Editor */}
                   <div className="flex-1 overflow-hidden">
                     {activeFile ? (
-                      <CollabEditor
-                        sessionId={session.sessionId}
-                        userId={user?.id}
-                        userName={user?.name || "Anonymous"}
-                        fileId={activeFile.id}
-                        filePath={`${activeFile.path || ""}/${activeFile.filename}.${
-                          activeFile.fileExtension
-                        }`.replace(/^\//, "")}
-                        initialContent={
-                          typeof activeFile.content === "string" ? activeFile.content : ""
-                        }
-                        language={getLanguage(activeFile.fileExtension || "")}
-                        onContentChange={(content) =>
-                          handleFileContentChange(activeFile.id, content)
-                        }
-                      />
-                    ) : (
-                      <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                        No files open. Select a file from the sidebar.
-                      </div>
-                    )}
+  <CollabEditor
+    sessionId={session.sessionId}
+    userId={user?.id}
+    userName={user?.name || "Anonymous"}
+    fileId={activeFile.id}
+    filePath={(() => {
+      // 🔥 FIX: Build correct filePath
+      const basePath = activeFile.path || "";
+      const fileName = `${activeFile.filename}.${activeFile.fileExtension}`;
+      const fullPath = basePath ? `${basePath}/${fileName}` : fileName;
+      return fullPath.replace(/^\//, ""); // Remove leading slash
+    })()}
+    initialContent={
+      typeof activeFile.content === "string" ? activeFile.content : ""
+    }
+    language={getLanguage(activeFile.fileExtension || "")}
+    onContentChange={(content) =>
+      handleFileContentChange(activeFile.id, content)
+    } remoteCursors={CursorsInCurrentFile}
+    onCursorPositionChange={setLocalCursorPosition}
+  />
+) : (
+  <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+    No files open. Select a file from the sidebar.
+  </div>
+)}
                   </div>
                 </div>
 
@@ -1083,29 +1110,33 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
 
                 <div className="flex-1 overflow-hidden">
                   {activeFile ? (
-                    <CollabEditor
-                      sessionId={session.sessionId}
-                      userId={user?.id}
-                      userName={user?.name || "Anonymous"}
-                      fileId={activeFile.id}
-                      filePath={`${activeFile.path || ""}/${activeFile.filename}.${
-                        activeFile.fileExtension
-                      }`.replace(/^\//, "")}
-                      initialContent={
-                        typeof activeFile.content === "string" ? activeFile.content : ""
-                      }
-                      language={getLanguage(activeFile.fileExtension || "")}
-                      onContentChange={(content) =>
-                        handleFileContentChange(activeFile.id, content)
-                      }
-                    />
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                      {templateData
-                        ? "No files open. Select a file from the sidebar."
-                        : "Loading template..."}
-                    </div>
-                  )}
+  <CollabEditor
+    sessionId={session.sessionId}
+    userId={user?.id}
+    userName={user?.name || "Anonymous"}
+    fileId={activeFile.id}
+    filePath={(() => {
+      // 🔥 FIX: Build correct filePath
+      const basePath = activeFile.path || "";
+      const fileName = `${activeFile.filename}.${activeFile.fileExtension}`;
+      const fullPath = basePath ? `${basePath}/${fileName}` : fileName;
+      return fullPath.replace(/^\//, ""); // Remove leading slash
+    })()}
+    initialContent={
+      typeof activeFile.content === "string" ? activeFile.content : ""
+    }
+    language={getLanguage(activeFile.fileExtension || "")}
+    onContentChange={(content) =>
+      handleFileContentChange(activeFile.id, content)
+    } remoteCursors={CursorsInCurrentFile} onCursorPositionChange={setLocalCursorPosition}
+  />
+) : (
+  <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+    {templateData
+      ? "No files open. Select a file from the sidebar."
+      : "Loading template..."}
+  </div>
+)}
                 </div>
               </>
             )}

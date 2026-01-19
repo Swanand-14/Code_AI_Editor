@@ -87,31 +87,72 @@ export async function longPoll<T>(
  * @param rootFolder The root template folder containing all files
  * @returns A unique file identifier including full path
  */
+// export const generateFileId = (file: TemplateFile, rootFolder: TemplateFolder): string => {
+//   // 🔥 FIX: Use file.path if available (passed from explorer), otherwise find it
+//   // CRITICAL: Check if path is undefined, not falsy - empty string '' means root level
+//   let filePath = file.path;
+//   if (file.path === undefined) {
+//     // If no path provided, try to find it (will return first match)
+//     filePath = findFilePath(file, rootFolder)?.replace(/^\/+/, '') || '';
+//   } else {
+//     // 🔥 CRITICAL: If path is provided, verify it matches the file in folder structure
+//     // This ensures we get the correct file even if multiple have same name
+//     const normalizedPath = filePath.replace(/^\/+/, '');
+//     const verifiedPath = findFilePath(file, rootFolder, [], normalizedPath)?.replace(/^\/+/, '');
+//     if (verifiedPath) {
+//       filePath = verifiedPath;
+//     }
+//   }
+  
+//   // Handle empty/undefined file extension
+//   const extension = file.fileExtension?.trim();
+//   const extensionSuffix = extension ? `.${extension}` : '';
+
+//   // Combine path and filename
+//   return filePath
+//     ? `${filePath}/${file.filename}${extensionSuffix}`
+//     : `${file.filename}${extensionSuffix}`;
+// }
+
 export const generateFileId = (file: TemplateFile, rootFolder: TemplateFolder): string => {
+  // 🔥 DEBUG: Log what we're receiving
+  console.log("🔍 generateFileId called:", {
+    filename: file.filename,
+    extension: file.fileExtension,
+    path: file.path,
+    pathType: typeof file.path
+  });
+
   // 🔥 FIX: Use file.path if available (passed from explorer), otherwise find it
-  // CRITICAL: Check if path is undefined, not falsy - empty string '' means root level
   let filePath = file.path;
   if (file.path === undefined) {
     // If no path provided, try to find it (will return first match)
-    filePath = findFilePath(file, rootFolder)?.replace(/^\/+/, '') || '';
+    const foundPath = findFilePath(file, rootFolder)?.replace(/^\/+/, '');
+    filePath = foundPath ? foundPath.split('/').slice(0, -1).join('/') : '';
   } else {
-    // 🔥 CRITICAL: If path is provided, verify it matches the file in folder structure
-    // This ensures we get the correct file even if multiple have same name
-    const normalizedPath = filePath.replace(/^\/+/, '');
-    const verifiedPath = findFilePath(file, rootFolder, [], normalizedPath)?.replace(/^\/+/, '');
-    if (verifiedPath) {
-      filePath = verifiedPath;
-    }
+    // Normalize the path - remove leading/trailing slashes
+    filePath = file.path.replace(/^\/+|\/+$/g, '');
   }
   
   // Handle empty/undefined file extension
   const extension = file.fileExtension?.trim();
   const extensionSuffix = extension ? `.${extension}` : '';
+  const fullFileName = `${file.filename}${extensionSuffix}`;
 
-  // Combine path and filename
-  return filePath
-    ? `${filePath}/${file.filename}${extensionSuffix}`
-    : `${file.filename}${extensionSuffix}`;
+  // 🔥 CRITICAL FIX: Check if filePath already contains the filename
+  // This prevents "README.md/README.md" duplication
+  if (filePath && filePath.endsWith(fullFileName)) {
+    console.log("⚠️ Path already contains filename, using path as-is:", filePath);
+    return filePath;
+  }
+
+  // Build the final ID
+  const finalId = filePath
+    ? `${filePath}/${fullFileName}`
+    : fullFileName;
+
+  console.log("✅ Generated file ID:", finalId);
+  return finalId;
 }
 
 /**
