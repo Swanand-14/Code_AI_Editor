@@ -1,0 +1,303 @@
+/* ============================================
+   Remote Cursor Styles (Enhanced with Gutter Icons)
+   ============================================ */
+
+/* ============================================
+   Cursor Lines (Different Colors)
+   ============================================ */
+.remoteCursorBlue {
+  border-left: 3px solid #3b82f6 !important;
+  animation: blink-cursor 1s infinite;
+  position: relative !important;
+}
+
+.remoteCursorGreen {
+  border-left: 3px solid #10b981 !important;
+  animation: blink-cursor 1s infinite;
+  position: relative !important;
+}
+
+.remoteCursorOrange {
+  border-left: 3px solid #f97316 !important;
+  animation: blink-cursor 1s infinite;
+  position: relative !important;
+}
+
+.remoteCursorPurple {
+  border-left: 3px solid #a855f7 !important;
+  animation: blink-cursor 1s infinite;
+  position: relative !important;
+}
+
+.remoteCursorRed {
+  border-left: 3px solid #ef4444 !important;
+  animation: blink-cursor 1s infinite;
+  position: relative !important;
+}
+
+.remoteCursorPink {
+  border-left: 3px solid #ec4899 !important;
+  animation: blink-cursor 1s infinite;
+  position: relative !important;
+}
+
+.remoteCursorYellow {
+  border-left: 3px solid #eab308 !important;
+  animation: blink-cursor 1s infinite;
+  position: relative !important;
+}
+
+.remoteCursorCyan {
+  border-left: 3px solid #06b6d4 !important;
+  animation: blink-cursor 1s infinite;
+  position: relative !important;
+}
+
+/* ============================================
+   Selection Highlights (Different Colors)
+   ============================================ */
+.remoteSelectionBlue {
+  background-color: rgba(59, 130, 246, 0.3) !important;
+}
+
+.remoteSelectionGreen {
+  background-color: rgba(16, 185, 129, 0.3) !important;
+}
+
+.remoteSelectionOrange {
+  background-color: rgba(249, 115, 22, 0.3) !important;
+}
+
+.remoteSelectionPurple {
+  background-color: rgba(168, 85, 247, 0.3) !important;
+}
+
+.remoteSelectionRed {
+  background-color: rgba(239, 68, 68, 0.3) !important;
+}
+
+.remoteSelectionPink {
+  background-color: rgba(236, 72, 153, 0.3) !important;
+}
+
+.remoteSelectionYellow {
+  background-color: rgba(234, 179, 8, 0.3) !important;
+}
+
+.remoteSelectionCyan {
+  background-color: rgba(6, 182, 212, 0.3) !important;
+}
+
+/* ============================================
+   🔥 NEW: Proximity Glyph Widgets
+   ============================================ */
+
+.proximity-glyph {
+  font-size: 14px !important;
+  line-height: 1 !important;
+  user-select: none !important;
+  pointer-events: auto !important;
+  display: inline-block !important;
+}
+
+.proximity-warning-glyph {
+  animation: proximity-pulse 2s ease-in-out infinite;
+}
+
+@keyframes proximity-pulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.7;
+    transform: scale(1.15);
+  }
+}
+
+/* ============================================
+   Cursor Blinking Animation
+   ============================================ */
+@keyframes blink-cursor {
+  0%, 49% {
+    opacity: 1;
+  }
+  50%, 100% {
+    opacity: 0.4;
+  }
+}
+
+/* ============================================
+   Username Label (Above Cursor)
+   ============================================ */
+.cursorLabel {
+  position: relative;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 600;
+  color: white;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1000;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  display: inline-block;
+  margin-bottom: 20px;
+  margin-top: -24px;
+}
+
+.cursorLabelBlue {
+  background-color: #3b82f6;
+}
+
+.cursorLabelGreen {
+  background-color: #10b981;
+}
+
+.cursorLabelOrange {
+  background-color: #f97316;
+}
+
+.cursorLabelPurple {
+  background-color: #a855f7;
+}
+
+.cursorLabelRed {
+  background-color: #ef4444;
+}
+
+.cursorLabelPink {
+  background-color: #ec4899;
+}
+
+.cursorLabelYellow {
+  background-color: #eab308;
+  color: #333;
+}
+
+.cursorLabelCyan {
+  background-color: #06b6d4;
+}
+
+/* ============================================
+   Monaco Editor Specific Styles
+   ============================================ */
+.monaco-editor .view-overlays .remoteCursorBlue {
+  border-left: 3px solid #3b82f6 !important;
+}
+
+.monaco-editor .view-overlays .remoteCursorGreen {
+  border-left: 3px solid #10b981 !important;
+}
+
+.monaco-editor .view-overlays .remoteCursorOrange {
+  border-left: 3px solid #f97316 !important;
+}
+
+.monaco-editor .view-overlays .remoteCursorPurple {
+  border-left: 3px solid #a855f7 !important;
+}
+
+.monaco-editor .view-overlays .remoteCursorRed {
+  border-left: 3px solid #ef4444 !important;
+}
+
+.monaco-editor .view-overlays .remoteCursorPink {
+  border-left: 3px solid #ec4899 !important;
+}
+
+.monaco-editor .view-overlays .remoteCursorYellow {
+  border-left: 3px solid #eab308 !important;
+}
+
+.monaco-editor .view-overlays .remoteCursorCyan {
+  border-left: 3px solid #06b6d4 !important;
+}
+
+/* Decoration line wrapper */
+.monaco-editor .view-lines .remoteCursor {
+  position: relative !important;
+  overflow: visible !important;
+}
+
+/* Make sure selections are visible too */
+.monaco-editor .view-overlays .remoteSelection {
+  position: relative !important;
+}
+
+/* ============================================
+   🔥 ACCESSIBILITY & RESPONSIVE
+   ============================================ */
+@media (max-width: 768px) {
+  .proximity-glyph {
+    display: none !important;
+  }
+}
+
+/* ============================================
+   🔥 NEW: Proximity Zones (Visual Editing Context)
+   ============================================ */
+
+/* Proximity Zones - Uniform 8% opacity for subtle backgrounds */
+.proximity-zone-danger {
+  background-color: rgba(244, 194, 44, 0.2) !important; /* 20% yellow - STRONG */
+}
+
+/* ZONE LINES - Surrounding Context (Lighter) */
+.proximity-zone-blue {
+  background-color: rgba(59, 130, 246, 0.08) !important;
+}
+
+.proximity-zone-green {
+  background-color: rgba(16, 185, 129, 0.08) !important;
+}
+
+.proximity-zone-orange {
+  background-color: rgba(249, 115, 22, 0.08) !important;
+}
+
+.proximity-zone-purple {
+  background-color: rgba(168, 85, 247, 0.08) !important;
+}
+
+.proximity-zone-red {
+  background-color: rgba(239, 68, 68, 0.08) !important;
+}
+
+.proximity-zone-pink {
+  background-color: rgba(236, 72, 153, 0.08) !important;
+}
+
+.proximity-zone-yellow {
+  background-color: rgba(244, 205, 86, 0.08) !important;
+}
+
+.proximity-zone-cyan {
+  background-color: rgba(6, 182, 212, 0.08) !important;
+}
+
+/* Ensure zones appear behind cursor lines */
+.monaco-editor .view-overlays .proximity-zone-danger,
+.monaco-editor .view-overlays .proximity-zone-blue,
+.monaco-editor .view-overlays .proximity-zone-green,
+.monaco-editor .view-overlays .proximity-zone-orange,
+.monaco-editor .view-overlays .proximity-zone-purple,
+.monaco-editor .view-overlays .proximity-zone-red,
+.monaco-editor .view-overlays .proximity-zone-pink,
+.monaco-editor .view-overlays .proximity-zone-yellow,
+.monaco-editor .view-overlays .proximity-zone-cyan {
+  z-index: 0 !important; /* Zones behind cursor lines */
+}
+
+/* Cursor lines stay on top */
+.monaco-editor .view-overlays .remoteCursorBlue,
+.monaco-editor .view-overlays .remoteCursorGreen,
+.monaco-editor .view-overlays .remoteCursorOrange,
+.monaco-editor .view-overlays .remoteCursorPurple,
+.monaco-editor .view-overlays .remoteCursorRed,
+.monaco-editor .view-overlays .remoteCursorPink,
+.monaco-editor .view-overlays .remoteCursorYellow,
+.monaco-editor .view-overlays .remoteCursorCyan {
+  z-index: 1 !important; /* Cursor lines on top of zones */
+}

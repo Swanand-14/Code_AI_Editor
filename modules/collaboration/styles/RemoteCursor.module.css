@@ -1,0 +1,236 @@
+.remoteCursorBlue {
+  border-left: 2px solid #3b82f6 !important;
+  animation: blink 1s infinite;
+}
+
+.remoteCursorGreen {
+  border-left: 2px solid #10b981 !important;
+  animation: blink 1s infinite;
+}
+
+.remoteCursorOrange {
+  border-left: 2px solid #f97316 !important;
+  animation: blink 1s infinite;
+}
+
+.remoteCursorPurple {
+  border-left: 2px solid #a855f7 !important;
+  animation: blink 1s infinite;
+}
+
+.remoteCursorRed {
+  border-left: 2px solid #ef4444 !important;
+  animation: blink 1s infinite;
+}
+
+.remoteCursorPink {
+  border-left: 2px solid #ec4899 !important;
+  animation: blink 1s infinite;
+}
+
+.remoteCursorYellow {
+  border-left: 2px solid #eab308 !important;
+  animation: blink 1s infinite;
+}
+
+.remoteCursorCyan {
+  border-left: 2px solid #06b6d4 !important;
+  animation: blink 1s infinite;
+}
+
+/* ============================================
+   Selection Highlights (Different Colors)
+   ============================================ */
+.remoteSelectionBlue {
+  background-color: rgba(59, 130, 246, 0.2) !important;
+}
+
+.remoteSelectionGreen {
+  background-color: rgba(16, 185, 129, 0.2) !important;
+}
+
+.remoteSelectionOrange {
+  background-color: rgba(249, 115, 22, 0.2) !important;
+}
+
+.remoteSelectionPurple {
+  background-color: rgba(168, 85, 247, 0.2) !important;
+}
+
+.remoteSelectionRed {
+  background-color: rgba(239, 68, 68, 0.2) !important;
+}
+
+.remoteSelectionPink {
+  background-color: rgba(236, 72, 153, 0.2) !important;
+}
+
+.remoteSelectionYellow {
+  background-color: rgba(234, 179, 8, 0.2) !important;
+}
+
+.remoteSelectionCyan {
+  background-color: rgba(6, 182, 212, 0.2) !important;
+}
+
+/* ============================================
+   Cursor Blinking Animation
+   ============================================ */
+@keyframes blink {
+  0%, 49% {
+    opacity: 1;
+  }
+  50%, 100% {
+    opacity: 0;
+  }
+}
+
+/* ============================================
+   Username Label (Above Cursor)
+   ============================================ */
+.cursorLabel {
+  position: absolute;
+  top: -20px;
+  left: -2px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  color: white;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1000;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Color-specific labels */
+.cursorLabelBlue {
+  background-color: #3b82f6;
+}
+
+.cursorLabelGreen {
+  background-color: #10b981;
+}
+
+.cursorLabelOrange {
+  background-color: #f97316;
+}
+
+.cursorLabelPurple {
+  background-color: #a855f7;
+}
+
+.cursorLabelRed {
+  background-color: #ef4444;
+}
+
+.cursorLabelPink {
+  background-color: #ec4899;
+}
+
+.cursorLabelYellow {
+  background-color: #eab308;
+}
+
+.cursorLabelCyan {
+  background-color: #06b6d4;
+}
+
+/* ============================================
+   Glyphs (Optional - for margin icons)
+   ============================================ */
+.cursorGlyph {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 10px;
+  font-weight: bold;
+}
+
+.cursorGlyphBlue {
+  background-color: #3b82f6;
+}
+
+.cursorGlyphGreen {
+  background-color: #10b981;
+}
+
+.cursorGlyphOrange {
+  background-color: #f97316;
+}
+
+.cursorGlyphPurple {
+  background-color: #a855f7;
+}
+
+.cursorGlyphRed {
+  background-color: #ef4444;
+}
+
+.cursorGlyphPink {
+  background-color: #ec4899;
+}
+
+.cursorGlyphYellow {
+  background-color: #eab308;
+}
+
+.cursorGlyphCyan {
+  background-color: #06b6d4;
+}
+.monaco-editor .margin-view-overlays .cursorGlyph {
+  width: 16px !important;
+  height: 16px !important;
+  border-radius: 50% !important;
+  display: inline-block !important;
+  margin-left: 2px !important;
+}
+
+.monaco-editor .margin-view-overlays .cursorGlyphBlue {
+  background-color: #3b82f6 !important;
+}
+
+.monaco-editor .margin-view-overlays .cursorGlyphGreen {
+  background-color: #10b981 !important;
+}
+
+.monaco-editor .margin-view-overlays .cursorGlyphOrange {
+  background-color: #f97316 !important;
+}
+
+.monaco-editor .margin-view-overlays .cursorGlyphPurple {
+  background-color: #a855f7 !important;
+}
+
+.monaco-editor .margin-view-overlays .cursorGlyphRed {
+  background-color: #ef4444 !important;
+}
+
+.monaco-editor .margin-view-overlays .cursorGlyphPink {
+  background-color: #ec4899 !important;
+}
+
+.monaco-editor .margin-view-overlays .cursorGlyphYellow {
+  background-color: #eab308 !important;
+}
+
+.monaco-editor .margin-view-overlays .cursorGlyphCyan {
+  background-color: #06b6d4 !important;
+}
+
+/* ============================================
+   🔥 STRONGER Cursor Lines (in code area)
+   ============================================ */
+.monaco-editor .view-overlays .remoteCursorBlue {
+  border-left: 3px solid #3b82f6 !important;
+  position: relative !important;
+}
+
+.monaco-editor .view-overlays .remoteCursorGreen {
+  border-left: 3px solid #10b981 !important;
+  position: relative !important;
+}
