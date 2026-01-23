@@ -10,6 +10,10 @@ interface ParticipantInfo {
   joinedAt: number;
   lastActivity: number;
   activeFile?: string;
+  cursor?: {
+    fileId: string;
+    position: { lineNumber: number; column: number };
+  };
 }
 
 interface ActivityLogEntry {
@@ -27,12 +31,14 @@ interface ParticipantsPanelProps {
   participants: ParticipantInfo[];
   activityLogs: ActivityLogEntry[];
   currentUserId?: string;
+  followingUserId?: string | null; 
+  onFollowToggle?: (userId: string) => void;
 }
 
 export function ParticipantsPanel({ 
   participants, 
   activityLogs, 
-  currentUserId 
+  currentUserId , followingUserId, onFollowToggle
 }: ParticipantsPanelProps) {
   const formatTime = (timestamp: number) => {
     const now = Date.now();
@@ -74,7 +80,11 @@ export function ParticipantsPanel({
     
     return imageUrl;
   };
-
+ const getFileName = (filePath?: string) => {
+    if (!filePath) return null;
+    const parts = filePath.split('/');
+    return parts[parts.length - 1];
+  };
   return (
     <div className="flex flex-col h-full bg-background border-l w-80">
       {/* Participants Section */}
@@ -91,11 +101,24 @@ export function ParticipantsPanel({
             {participants.map((participant) => {
               const isCurrentUser = participant.userId === currentUserId;
               const proxiedImageUrl = getProxiedImageUrl(participant.userImage);
+              const fileName = getFileName(participant.activeFile);
+              const isFollowing = followingUserId === participant.userId;
               
               return (
                 <div
                   key={participant.userId}
-                  className="flex items-center gap-3 p-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors"
+                  onClick={() => !isCurrentUser && onFollowToggle?.(participant.userId)}
+                  className={`
+                    flex items-center gap-3 p-2 rounded-md transition-all
+                    ${isCurrentUser 
+                      ? 'bg-muted/30' 
+                      : 'cursor-pointer hover:bg-muted/50'
+                    }
+                    ${isFollowing 
+                      ? 'bg-blue-50 dark:bg-blue-950/30 border-l-4 border-blue-500 pl-[6px]' 
+                      : ''
+                    }
+                  `}
                 >
                   <div className="relative">
                     {proxiedImageUrl ? (
@@ -133,12 +156,33 @@ export function ParticipantsPanel({
                         {participant.role}
                       </span>
                     </div>
-                    {participant.userId!==currentUserId && participant.activeFile && (
-                      <p className="text-xs text-muted-foreground truncate mt-0.5">
-                         {participant.activeFile}
-                      </p>
+                    {!isCurrentUser && fileName && (
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <p className="text-xs text-muted-foreground truncate">
+                          {fileName}
+                          {participant.cursor?.position && (
+                            <span className="text-primary font-medium ml-1">
+                              :{participant.cursor.position.lineNumber}
+                            </span>
+                          )}
+                        </p>
+                      </div>
                     )}
                   </div>
+                   {!isCurrentUser && (
+                    <div className="flex items-center">
+                      <div 
+                        className={`
+                          w-2 h-2 rounded-full transition-all
+                          ${isFollowing 
+                            ? 'bg-blue-500 shadow-[0_0_0_4px_rgba(59,130,246,0.3)] animate-pulse' 
+                            : 'bg-gray-400 dark:bg-gray-600'
+                          }
+                        `}
+                      />
+                    </div>
+                  )}
+                  
                 </div>
               );
             })}

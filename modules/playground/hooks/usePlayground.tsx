@@ -67,10 +67,11 @@ export const usePlayground = (id:string):UsePlaygroundReturn => {
         }
         toast.success("Template loaded successfully");
 
-     } catch (error) {
-        console.error("Error loading playground",error);
-        setError("Failed to load playground data");
-        toast.error("Failed to load playground data")
+     } catch (error:any) {
+       const errorMessage = error?.message || "Failed to load playground";
+        console.error("Error loading playground", error);
+        setError(errorMessage);
+        toast.error(errorMessage);
         
      }
      finally{

@@ -6,6 +6,10 @@ import { currentUser } from "@/modules/auth/actions";
 
 export const getPlaygroundById = async(id: string) => {
     try {
+        const user = await currentUser();
+        if (!user) {
+            throw new Error("Unauthorized - Please sign in");
+        }
         const playground = await prisma.playground.findUnique({
             where: {
                 id
@@ -16,6 +20,15 @@ export const getPlaygroundById = async(id: string) => {
                 Starmark: true,       // Optional: if you need starmark data
             }
         })
+
+        if (!playground) {
+            throw new Error("Playground not found");
+        }
+
+        if (playground.userId !== user.id) {
+            throw new Error("Unauthorized - You don't have access to this playground");
+        }
+
 
         return playground;
     } catch (error) {
@@ -28,7 +41,17 @@ export const SaveUpdatedCode = async(plagroundId:string,data:TemplateFolder) => 
     if(!user){
         return null;
     }
+
+
     try {
+        const playground = await prisma.playground.findUnique({
+            where: { id: plagroundId },
+            select: { userId: true }
+        });
+
+        if (!playground || playground.userId !== user.id) {
+            throw new Error("Unauthorized - You don't have access to this playground");
+        }
         const updatedPlayground = await prisma.templateFile.upsert({
             where:{plagroundId},
             update:{content:JSON.stringify(data)},

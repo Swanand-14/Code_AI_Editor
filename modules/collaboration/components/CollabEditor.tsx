@@ -8,6 +8,7 @@ import { Loader2 } from "lucide-react";
 import { RemoteCursor } from "../hooks/useRemoteCursors";
 import "@/modules/collaboration/styles/remote-cursor.css";
 import { useProximityWarnings } from "../hooks/useProximityWarnings";
+import { configureMonaco, getEditorLanguage } from "@/modules/playground/lib/editor-config";
 
 interface CollabEditorProps {
   sessionId: string;
@@ -19,6 +20,7 @@ interface CollabEditorProps {
   language: string;
   onContentChange?: (content: string) => void;
   remoteCursors?:RemoteCursor[];
+  onEditorReady?: (editor: editor.IStandaloneCodeEditor) => void;
   onCursorPositionChange?: (position: { lineNumber: number; column: number }) => void;
 }
 
@@ -170,7 +172,7 @@ export function CollabEditor({
   filePath,
   initialContent,
   language,
-  onContentChange,remoteCursors = [], onCursorPositionChange,
+  onContentChange,remoteCursors = [], onCursorPositionChange,onEditorReady
 }: CollabEditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
@@ -202,6 +204,24 @@ export function CollabEditor({
     console.log(`📁 Updated current file refs: ${fileId} | ${filePath}`);
 
   },[fileId,filePath])
+   const updateEditorLanguage = useCallback(() => {
+    if (!monacoRef.current || !editorRef.current) return;
+    
+    const model = editorRef.current.getModel();
+    if (!model) return;
+
+    // Extract file extension from filePath
+    const fileExtension = filePath.split('.').pop() || '';
+    const detectedLanguage = getEditorLanguage(fileExtension);
+    
+    console.log(`🎨 Setting language for ${filePath}: ${detectedLanguage} (extension: ${fileExtension})`);
+    
+    try {
+      monacoRef.current.editor.setModelLanguage(model, detectedLanguage);
+    } catch (error) {
+      console.warn("Failed to set editor language:", error);
+    }
+  }, [filePath]);
 
   const handleEditorDidMount = useCallback(
     (editor: editor.IStandaloneCodeEditor, monaco: Monaco) => {
@@ -209,6 +229,11 @@ export function CollabEditor({
       monacoRef.current = monaco;
 
       console.log("✅ Monaco editor mounted for collab");
+      configureMonaco(monaco);
+      
+      // 🔥 FIX: Set initial language (was missing!)
+      updateEditorLanguage();
+      onEditorReady?.(editor);
 
       // Listen for cursor position changes
       editor.onDidChangeCursorPosition((e) => {
@@ -298,6 +323,9 @@ export function CollabEditor({
     },
     [fileId, filePath, emitEditorChange, onContentChange]
   );
+   useEffect(() => {
+    updateEditorLanguage();
+  }, [filePath, updateEditorLanguage]);
   useEffect(() => {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
@@ -597,6 +625,7 @@ export function CollabEditor({
         
         // Reset cursor to start when switching files
         editorRef.current.setPosition({ lineNumber: 1, column: 1 });
+        updateEditorLanguage();
         
         setTimeout(() => {
           isRemoteChange.current = false;

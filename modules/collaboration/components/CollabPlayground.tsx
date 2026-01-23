@@ -9,6 +9,7 @@ import type { CollabSessionData } from "../types";
 import { LoadingStep } from "@/modules/playground/components/loader";
 import { currentUser } from "@/modules/auth/actions";
 import { CollabEditor } from "./CollabEditor";
+import React from "react";
 import { TemplateFile } from "@prisma/client";
 import { enrichTemplateWithPaths } from "@/modules/playground/lib";
 import { TemplateFolder } from "@/modules/playground/lib/path-to-json";
@@ -20,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { generateFileId } from "@/modules/playground/lib/index";
 import { useRemoteCursors } from "../hooks/useRemoteCursors";
 import { useProximityWarnings } from "../hooks/useProximityWarnings";
+import { editor } from "monaco-editor";
 import {
   Tooltip,
   TooltipContent,
@@ -35,6 +37,7 @@ import { HostOfflineBanner } from "./HostOfflineBanner";
 import TerminalComponent, { TerminalRef } from "@/modules/webContainers/components/terminal";
 import { useCollabParticipants } from "../hooks/useCollabParticipants";
 import { ParticipantsPanel } from "./ParticipantsPanel";
+import { getEditorLanguage } from "@/modules/playground/lib/editor-config";
 
 interface CollabPlaygroundProps {
   session: CollabSessionData;
@@ -46,6 +49,8 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
   const [user, setUser] = useState<{ id: string; name: string,image?:string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [localCursorPosition,setLocalCursorPosition] = useState<{lineNumber:number;column:number}>({lineNumber:1,column:1});
+  const [followingUserId, setFollowingUserId] = useState<string | null>(null);
+const editorInstanceRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   
   // 🔥 NEW: Preview toggle state
   const [showPreview, setShowPreview] = useState(false);
@@ -90,6 +95,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
   sessionId: session.sessionId,
   currentUserId: user?.id,
 });
+const activeFile = Array.isArray(openFiles) ? openFiles.find((f) => f.id === activeFileId) : undefined;
 
   
   const { saveWorkSpace } = useWorkspaceAutoSave(session.sessionId, templateData, user?.id, true);
@@ -622,6 +628,92 @@ useEffect(() => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleSave, handleSaveAll]);
 
+  const toggleFollow = useCallback((userId: string) => {
+  if (followingUserId === userId) {
+    setFollowingUserId(null);
+    console.log('❌ Stopped following');
+  } else {
+    setFollowingUserId(userId);
+    console.log(`✅ Following user ${userId}`);
+  }
+}, [followingUserId]);
+
+useEffect(() => {
+
+  if (!editorInstanceRef.current || !followingUserId) return;
+
+  const targetCursor = remoteCursors.get(followingUserId);
+  
+  if (!targetCursor) {
+    // User left current file - stop following
+    setFollowingUserId(null);
+    console.log('⚠️ Followed user left - stopping');
+    return;
+  }
+
+  const currentFilePath = activeFile?`${activeFile.path || ""}/${activeFile.filename}.${activeFile.fileExtension}`.replace(/^\//, ''):null;
+  if(targetCursor.filePath !== currentFilePath){
+    console.log('Switching file to follow user:', targetCursor.filePath);
+    const findfile = (items:any[],targetPath:string):any=>{
+      for(const item of items){
+        if("folderName" in item){
+          const found = findfile(item.items,targetPath);
+          if(found) return found;
+        }else{
+          const fullPath = `${item.path || ""}/${item.filename}.${item.fileExtension}`.replace(/^\//, '');
+          if(fullPath === targetPath){
+            return item;
+          }
+
+      }
+    }
+    return null;
+  }
+
+  if(templateData){
+    const fileToOpen = findfile(templateData.items,targetCursor.filePath);
+    if(fileToOpen){
+      console.log('📄 Opening file to follow:', targetCursor.filePath);
+      handleFileSelect(fileToOpen);
+      setTimeout(()=>{
+        if(editorInstanceRef.current){
+          editorInstanceRef.current.revealLineInCenterIfOutsideViewport(targetCursor.position.lineNumber);
+          console.log(`👁️ Scrolling to line ${targetCursor.position.lineNumber} after file open`);
+        }
+      },100)
+    }else{
+      console.warn('❌ Could not find file to follow:', targetCursor.filePath);
+      setFollowingUserId(null);
+    }
+  }
+
+  
+}else{
+editorInstanceRef.current.revealLineInCenterIfOutsideViewport(
+    targetCursor.position.lineNumber
+  );
+  
+  console.log(`👁️ Scrolling to line ${targetCursor.position.lineNumber}`);
+}
+
+
+
+  // Auto-scroll to target line
+  
+}, [remoteCursors,activeFile,templateData,handleFileSelect,CursorsInCurrentFile, followingUserId]);
+
+
+useEffect(() => {
+  const handleEsc = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' && followingUserId) {
+      setFollowingUserId(null);
+      console.log('❌ ESC - Stopped following');
+    }
+  };
+  
+  window.addEventListener('keydown', handleEsc);
+  return () => window.removeEventListener('keydown', handleEsc);
+}, [followingUserId]);
   // 🔥 Initialize
   useEffect(() => {
     let mounted = true;
@@ -745,24 +837,8 @@ useEffect(() => {
     Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60))
   );
 
-  const activeFile = Array.isArray(openFiles) ? openFiles.find((f) => f.id === activeFileId) : undefined;
+  
   const hasUnsavedChanges = Array.isArray(openFiles) ? openFiles.some((f) => f.hasUnsavedChanges) : false;
-
-  const getLanguage = (extension: string): string => {
-    const map: Record<string, string> = {
-      js: "javascript",
-      jsx: "javascript",
-      ts: "typescript",
-      tsx: "typescript",
-      json: "json",
-      html: "html",
-      css: "css",
-      scss: "scss",
-      py: "python",
-      md: "markdown",
-    };
-    return map[extension] || "plaintext";
-  };
 
   return (
     <TooltipProvider>
@@ -1020,11 +1096,12 @@ useEffect(() => {
     initialContent={
       typeof activeFile.content === "string" ? activeFile.content : ""
     }
-    language={getLanguage(activeFile.fileExtension || "")}
+    language={getEditorLanguage(activeFile.fileExtension || "")}
     onContentChange={(content) =>
       handleFileContentChange(activeFile.id, content)
     } remoteCursors={CursorsInCurrentFile}
     onCursorPositionChange={setLocalCursorPosition}
+    onEditorReady={(editor) => { editorInstanceRef.current = editor; }}
   />
 ) : (
   <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
@@ -1125,10 +1202,11 @@ useEffect(() => {
     initialContent={
       typeof activeFile.content === "string" ? activeFile.content : ""
     }
-    language={getLanguage(activeFile.fileExtension || "")}
+    language={getEditorLanguage(activeFile.fileExtension || "")}
     onContentChange={(content) =>
       handleFileContentChange(activeFile.id, content)
     } remoteCursors={CursorsInCurrentFile} onCursorPositionChange={setLocalCursorPosition}
+    onEditorReady={(editor) => { editorInstanceRef.current = editor; }}
   />
 ) : (
   <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
@@ -1143,9 +1221,19 @@ useEffect(() => {
           </div>
 
            <ParticipantsPanel
-          participants={participants}
+         participants={participants.map(p => {
+    const cursor = remoteCursors.get(p.userId);
+    return cursor ? { 
+      ...p, 
+      cursor: { fileId: cursor.fileId, position: cursor.position },
+      activeFile: cursor.filePath 
+    } : p;
+  })}
           activityLogs={activityLogs}
           currentUserId={user?.id}
+
+          followingUserId={followingUserId} // 🔥 NEW
+  onFollowToggle={toggleFollow}     // 🔥 NEW
         />
         </div>
       </SidebarProvider>
