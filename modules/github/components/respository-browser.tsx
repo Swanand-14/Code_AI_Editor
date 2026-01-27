@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation"
 import { Search, GitBranch, Lock, Globe, Loader2, AlertCircle } from "lucide-react"
 import { signIn } from "next-auth/react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { StartGitHubCollabButton } from "@/modules/collaboration/components/StartCollabGitHub"
 
 interface Repository {
   id: number
@@ -171,20 +172,33 @@ export function RepositoryBrowser() {
                 </div>
               </div>
 
-              <Button
-                onClick={() => handleOpenRepository(repo)}
-                disabled={linkingRepo === repo.id}
-                size="sm"
-              >
-                {linkingRepo === repo.id ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Opening...
-                  </>
-                ) : (
-                  "Open"
-                )}
-              </Button>
+
+
+             <div className="flex gap-2">
+                <Button
+                  onClick={() => handleOpenRepository(repo)}
+                  disabled={linkingRepo === repo.id}
+                  size="sm"
+                  variant="outline"
+                >
+                  {linkingRepo === repo.id ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Opening...
+                    </>
+                  ) : (
+                    "Open"
+                  )}
+                </Button>
+
+                {/* 🔥 NEW: Start Collaboration Button */}
+                <StartGitHubCollabButton
+                  repoFullName={repo.full_name}
+                  repoId={repo.id}
+                  defaultBranch={repo.default_branch}
+                  repoName={repo.name}
+                />
+              </div>
             </div>
           </Card>
         ))}

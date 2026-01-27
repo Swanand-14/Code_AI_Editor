@@ -4,6 +4,7 @@ import { CollabPlayground } from "@/modules/collaboration/components/CollabPlayg
 import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
+import { GitHubCollabPlayground } from "@/modules/collaboration/components/GitHubCollabPlayground";
 
 interface CollabPageProps {
   params: {
@@ -36,6 +37,10 @@ export default async function CollabPage({ params }: CollabPageProps) {
   // For starter projects, redirect to collab playground
   if (result.session.projectType === "starter") {
     return <CollabPlayground session={result.session} />;
+  }
+
+  if(result.session.projectType === "github"){
+    return<GitHubCollabPlayground session={result.session}/>;
   }
 
   // Future: Handle GitHub projects
