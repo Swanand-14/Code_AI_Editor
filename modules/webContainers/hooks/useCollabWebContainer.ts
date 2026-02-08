@@ -22,6 +22,7 @@ interface UseCollabWebContainerReturn {
   error: string | null;
   instance: any | null;
   isServerRunning: boolean;
+  isReady: boolean;
   
   // Terminal state (for all users)
   terminalHistory: string[];
@@ -415,6 +416,7 @@ export const useCollabWebContainer = ({
     isServerRunning: isHost 
       ? hostWebContainer.isServerRunning 
       : guestServerUrl !== null,
+    isReady:isHost?hostWebContainer.isReady:true,
     terminalHistory,
     startServer,
     restartServer,

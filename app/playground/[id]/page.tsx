@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState, useCallback, useRef } from "react";
+import React, { useEffect, useState, useCallback, useRef, use } from "react";
 import { useParams } from "next/navigation";
 import { Save, Bot, Settings, FileText, X, AlertCircle, ExternalLink } from "lucide-react";
 
@@ -48,12 +48,17 @@ import { createGitHubRepository } from "@/modules/github/actions";
 import { convertTemplateToFiles } from "@/modules/playground/lib/template-to-files";
 import { useRouter } from "next/navigation";
 import TerminalComponent,{TerminalRef} from "@/modules/webContainers/components/terminal";
+import { set } from "zod";
+
+
 
 function MainPlaygroundPage() {
   const { id } = useParams<{ id: string }>();
   const [isPreviewVisible, setIsPreviewVisible] = useState(false);
   const [createRepoDialogOpen, setCreateRepoDialogOpen] = useState(false);
   const [manualServerUrl, setManualServerUrl] = useState<string | null>(null);
+  const [terminalServerUrl, setTerminalServerUrl] = React.useState<string | null>(null);
+  const [isTerminalReady, setIsTerminalReady] = useState(false);
   const router = useRouter();
 
   const { playgroundData, templateData, isLoading, error, saveTemplateData } =
@@ -85,15 +90,18 @@ function MainPlaygroundPage() {
     error: webContainerError,
     instance: webContainerInstance,
     writeFileSync,
-    restartServer
-  } = useWebContainer({ templateData,projectId:id,terminalRef });
+    restartServer,isReady,startServer
+  } = useWebContainer({ templateData,projectId:id,terminalRef,autoStart:false });
 
   const lastSyncedContent = useRef<Map<string, string>>(new Map());
+  const autoStartAttempted = useRef<boolean>(false);
 
   useEffect(() => {
     setPlaygroundId(id);
     closeAllFiles();
     setActiveFileId(null)
+    autoStartAttempted.current = false;
+    setIsTerminalReady(false);
   }, [id, setPlaygroundId,closeAllFiles,setActiveFileId]);
 
   useEffect(() => {
@@ -136,6 +144,130 @@ useEffect(() => {
     }, 5000);
   }
 }, [webContainerInstance, serverUrl, manualServerUrl]);
+useEffect(() => {
+ if (!isReady || !webContainerInstance) {
+      console.log("⏳ Waiting for WebContainer to be ready...");
+      return;
+    }
+    
+    if (!isTerminalReady) {
+      console.log("⏳ Waiting for terminal shell to initialize...");
+      return;
+    }
+    
+    if (autoStartAttempted.current) {
+      console.log("⏭️ Auto-start already attempted");
+      return;
+    }
+    
+    if (webContainerService.isServerRunning()) {
+      console.log("⏭️ Server already running");
+      return;
+    }
+  autoStartAttempted.current = true;
+  
+  const timer = setTimeout(async()=>{
+    console.log("⏱️ Auto-starting dev server");
+    try {
+      await startServer();
+    } catch (error) {
+      console.error("Auto-start failed:", error);
+      autoStartAttempted.current = false;
+      
+    }
+  },1500)
+  
+  return () => clearTimeout(timer);
+}, [isReady, webContainerInstance, isTerminalReady, startServer]);
+
+useEffect(()=>{
+  const handleTerminalReady = () => {
+    console.log("✅ Terminal shell is ready");
+    setIsTerminalReady(true);
+  }
+
+  window.addEventListener('terminalReady', handleTerminalReady);
+  return () => {
+    window.removeEventListener('terminalReady', handleTerminalReady);
+  };
+  
+},[])
+
+useEffect(() => {
+  if (!webContainerInstance || !templateData) return;
+
+  console.log("🔍 Setting up package.json listener...");
+
+  const handlePackageJsonChange = async (data: { content: string }) => {
+    console.log("📦 package.json changed in WebContainer!");
+    
+    try {
+      // Parse the new content
+      const newPkg = JSON.parse(data.content);
+      console.log("New dependencies:", Object.keys(newPkg.dependencies || {}));
+      
+      // Clone template data
+      const updatedTemplateData = JSON.parse(JSON.stringify(templateData));
+      
+      // Find and update package.json in template
+      let found = false;
+      for (let i = 0; i < updatedTemplateData.items.length; i++) {
+        const item = updatedTemplateData.items[i];
+        if (item.filename === "package" && item.fileExtension === "json") {
+          console.log("✅ Updating package.json in template");
+          updatedTemplateData.items[i].content = data.content;
+          found = true;
+          break;
+        }
+      }
+      
+      if (!found) {
+        console.warn("❌ package.json not found in template");
+        return;
+      }
+      
+      // Update Zustand store
+      setTemplateData(updatedTemplateData);
+      
+      // Save to database
+      await saveTemplateData(updatedTemplateData);
+      
+      // Update open file if package.json is open
+      const openPkgJson = openFiles.find(
+        f => f.filename === "package" && f.fileExtension === "json"
+      );
+      
+      if (openPkgJson) {
+        const updatedOpenFiles = openFiles.map(f => 
+          f.id === openPkgJson.id 
+            ? { 
+                ...f, 
+                content: data.content, 
+                originalContent: data.content, 
+                hasUnsavedChanges: false 
+              }
+            : f
+        );
+        setOpenFiles(updatedOpenFiles);
+      }
+      
+      toast.success("📦 package.json synced from terminal");
+      
+    } catch (error) {
+      console.error("Failed to sync package.json:", error);
+      toast.error("Failed to sync package.json");
+    }
+  };
+
+  // Register listener
+  webContainerService.on("package-json-changed", handlePackageJsonChange);
+
+  // Cleanup
+  return () => {
+    webContainerService.off("package-json-changed", handlePackageJsonChange);
+  };
+}, [webContainerInstance, templateData, openFiles, setTemplateData, saveTemplateData, setOpenFiles]);
+
 
   useEffect(() => {
     if (templateData && !openFiles.length) {
@@ -808,12 +940,17 @@ useEffect(() => {
                     <ResizablePanel defaultSize={50}>
                       <WebContainerPreview
                         templateData={templateData}
-                        serverUrl={serverUrl || manualServerUrl}
+                        serverUrl={terminalServerUrl || serverUrl}
                         isLoading={webContainerLoading}
                         error={webContainerError}
                         instance={webContainerInstance}
                         writeFileSync={writeFileSync}
                         terminalRef={terminalRef}  // ← Add this line
+                        showTerminal={true}  // ← ADD THIS
+    onServerReady={(url:any) => {  // ← ADD THIS
+    console.log("📡 Terminal reported server ready:", url);
+    setTerminalServerUrl(url);
+  }}
                       />
                     </ResizablePanel>
                   </>

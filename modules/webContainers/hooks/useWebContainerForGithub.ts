@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { webContainerService } from "../services/webContainer-services";
+import { set } from "zod";
 
 interface GitHubFile {
   name: string;
@@ -32,6 +33,7 @@ interface UseWebContainerForGithubReturn {
   restartServer: () => Promise<void>;
   stopServer: () => void;
   writeFileSync: (path: string, content: string) => Promise<void>;
+  isReady: boolean;
 }
 
 interface ProjectDetectionResult {
@@ -55,6 +57,7 @@ export const useWebContainerForGithub = ({
   const [isServerRunning, setIsServerRunning] = useState(false);
   const [isSupported, setIsSupported] = useState(false);
   const [projectType, setProjectType] = useState<string | null>(null);
+  const [isReady, setIsReady] = useState(false);
 
   const hasInitialized = useRef(false);
   const currentProjectRef = useRef<string | null>(null);
@@ -438,10 +441,8 @@ export const useWebContainerForGithub = ({
         }
 
         // Auto-start server if enabled
-        if (autoStart) {
-          writeToTerminal("🚀 Starting dev server...\r\n");
-          await startServer();
-        }
+        setIsReady(true);
+        console.log("WebContainer ready - waiting for terminal");
 
         setIsLoading(false);
       } catch (err) {
@@ -481,12 +482,21 @@ export const useWebContainerForGithub = ({
       return;
     }
 
+    if(!terminalRef?.current){
+      console.error("Terminal reference is not available.");
+      setError("Terminal reference is not available.");
+      return;
+    }
+
+
+
     try {
       writeToTerminal("🎬 Starting dev server...\r\n");
-      await webContainerService.startDevServer(undefined, undefined, (data) => {
-        writeToTerminal(data);
-      });
-      setIsServerRunning(true);
+      const detected = await webContainerService.detectStartCommand();
+      const command = `${detected.command} ${detected.args.join(' ')}`;
+      console.log(`Exec command: ${command}`);
+      await terminalRef.current.runCommand(command);
+
     } catch (err) {
       console.error("Failed to start server:", err);
       setError(err instanceof Error ? err.message : "Failed to start server");
@@ -494,7 +504,7 @@ export const useWebContainerForGithub = ({
         `❌ Failed to start server: ${err instanceof Error ? err.message : "Unknown error"}\r\n`
       );
     }
-  }, [writeToTerminal]);
+  }, [writeToTerminal,terminalRef]);
 
   const restartServer = useCallback(async () => {
     try {
@@ -533,5 +543,6 @@ export const useWebContainerForGithub = ({
     startServer,
     restartServer,
     stopServer,
+    isReady,
   };
 };
