@@ -6,6 +6,8 @@ import { TemplateFolder } from "@/modules/playground/lib/path-to-json";
 import { transformToWebContainerFormat } from "./transformer";
 import * as pako from 'pako';
 import untar from 'js-untar';
+import { toast } from "sonner";
+
 
 interface UseWebContainerProps {
   templateData: TemplateFolder | null;
@@ -25,6 +27,7 @@ interface UseWebContainerReturn {
   startServer: () => Promise<void>;
   restartServer: () => Promise<void>;
   stopServer: () => void;
+  isReady?: boolean;
 }
 
 const BASE_TEMPLATES: Record<string, string> = {
@@ -42,10 +45,13 @@ export const useWebContainer = ({
   const [error, setError] = useState<string | null>(null);
   const [instance, setInstance] = useState<any | null>(null);
   const [isServerRunning, setIsServerRunning] = useState(false);
+  const [isReady, setIsReady] = useState(false);
   
   const hasInitialized = useRef(false);
   const currentProjectRef = useRef<string | null>(null);
   const CACHE_KEY_PREFIX = 'wc-deps-';
+  const serverStartAttempted = useRef(false);
+  
   const writeToTerminal = useCallback((data:string)=>{
     if(terminalRef?.current?.writeToTerminal){
       terminalRef.current.writeToTerminal(data);
@@ -92,7 +98,7 @@ export const useWebContainer = ({
       console.log("🎯 Server ready:", url);
       setServerUrl(url);
       setIsServerRunning(true);
-      writeToTerminal(`\r\n✅ Server ready at: ${url}\r\n`);
+      
     };
 
     webContainerService.on("server-ready", handleServerReady);
@@ -100,7 +106,81 @@ export const useWebContainer = ({
     return () => {
       webContainerService.off("server-ready", handleServerReady);
     };
-  }, [writeToTerminal,skipInit]);
+  }, [skipInit]);
+
+  useEffect(() => {
+    if (skipInit || !instance) return;
+
+    const handleFileChange = (event: { path: string; content: string }) => {
+      console.log(`📁 File changed: ${event.path}`);
+      
+      // Dispatch event for UI components
+      window.dispatchEvent(
+        new CustomEvent("webcontainerFileChange", {
+          detail: { path: event.path, content: event.content },
+        })
+      );
+    };
+
+    const handlePackageJsonChange = () => {
+      toast.info("package.json changed - reinstall may be needed");
+    };
+
+    const handleConfigChange = ({ path }: { path: string }) => {
+      toast.info(`Config file ${path.split('/').pop()} changed - server restart may be needed`);
+    };
+
+    webContainerService.on("file-changed", handleFileChange);
+    webContainerService.on("package-json-changed", handlePackageJsonChange);
+    webContainerService.on("config-changed", handleConfigChange);
+
+    return () => {
+      webContainerService.off("file-changed", handleFileChange);
+      webContainerService.off("package-json-changed", handlePackageJsonChange);
+      webContainerService.off("config-changed", handleConfigChange);
+    };
+  }, [instance, skipInit]);
+
+  
+useEffect(() => {
+  if (!instance || !templateData) return;
+
+  const handlePackageJsonUpdate = async (event: any) => {
+    try {
+      const updatedContent = await instance.fs.readFile('/package.json', 'utf-8');
+      
+      console.log("📦 Syncing package.json from WebContainer to editor");
+      console.log(`📝 Updated content length: ${updatedContent.length} chars`);
+      
+      // Dispatch a custom event that the main playground page can listen to
+      window.dispatchEvent(
+        new CustomEvent("packageJsonUpdated", {
+          detail: {
+            path: "/package.json",
+            content: updatedContent,
+            isAfterInstall: event?.isAfterInstall || false
+          }
+        })
+      );
+      
+      // Show success toast
+      if (event?.isAfterInstall) {
+        toast.success("Dependencies installed! package.json synced");
+      } else {
+        toast.info("package.json updated from WebContainer");
+      }
+    } catch (error) {
+      console.error("Failed to sync package.json:", error);
+      toast.error("Failed to sync package.json");
+    }
+  };
+
+  webContainerService.on("package-json-changed", handlePackageJsonUpdate);
+
+  return () => {
+    webContainerService.off("package-json-changed", handlePackageJsonUpdate);
+  };
+}, [instance, templateData]);
 
   const detectTemplateType = useCallback((packageJsonContent: string): string | null => {
     if(skipInit)return null;
@@ -346,7 +426,8 @@ export const useWebContainer = ({
           setIsLoading(true);
           setServerUrl(null);
           setIsServerRunning(false);
-          
+          setIsReady(false);
+          serverStartAttempted.current = false;
           await webContainerService.setCurrentProject(projectId);
           
           hasInitialized.current = false;
@@ -429,10 +510,12 @@ export const useWebContainer = ({
             console.log("📦 Installing dependencies via npm...");
             // 🔥 FIX: Now includes automatic npm rebuild
             const exitCode = await webContainerService.installDependencies();
+
             
             if (exitCode !== 0) {
               throw new Error(`npm install failed with code ${exitCode}`);
             }
+            await webContainerService.patchNextJsForWebContainer();
           }
           
           const hash = getPackageJsonHash(packageJsonContent);
@@ -443,18 +526,17 @@ export const useWebContainer = ({
         }
 
         // Auto-start server
-        if (autoStart) {
-          writeToTerminal("🚀 Auto-starting server...\r\n");
-          console.log("🚀 Auto-starting server...");
-          await startServer();
-        }
-
         setIsLoading(false);
+        setIsReady(true);
+        writeToTerminal("\r\n✅ WebContainer ready! Terminal will start dev server...\r\n\r\n");
+        console.log("✅ WebContainer ready - waiting for terminal to start server");
+           
       } catch (err) {
         console.error("❌ Setup error:", err);
         setError(err instanceof Error ? err.message : "Setup failed");
         writeToTerminal(`❌ Setup failed: ${err instanceof Error ? err.message : "Unknown error"}\r\n`);
         setIsLoading(false);
+        setIsReady(false);
         hasInitialized.current = false;
       }
     }
@@ -470,42 +552,84 @@ export const useWebContainer = ({
   );
 
   const startServer = useCallback(async () => {
-    if (webContainerService.isServerRunning()) {
-      console.log("⚠️ Server already running");
+
+
+    console.log("▶️ Start server called...");
+
+    if(serverStartAttempted.current || webContainerService.isServerRunning()){
+      console.log("Server start already attempted or server running - startServer aborted");
       return;
     }
 
-    try {
-      writeToTerminal(" Starting dev server...\r\n");
-      console.log("🎬 Starting dev server...");
-      await webContainerService.startDevServer();
+    serverStartAttempted.current = true;
+
+    
+
+
+    if(!terminalRef?.current){
+      console.error("Terminal ref not available - cannot start server");
+      setError("Terminal not available");
+      serverStartAttempted.current = false;
+      return;
+    }
+
+
+    
+
+    try{
+      writeToTerminal("🚀 Starting dev server...\r\n");
+      console.log("🚀 Starting dev server...");
+      const detected = await webContainerService.detectStartCommand();
+      const command = `${detected.command} ${detected.args.join(' ')}`;
+      await terminalRef.current.runCommand(command);
       setIsServerRunning(true);
-    } catch (err) {
+    }catch (err) {
       console.error("Failed to start server:", err);
       setError(err instanceof Error ? err.message : "Failed to start server");
       writeToTerminal(`❌ Failed to start server: ${err instanceof Error ? err.message : "Unknown error"}\r\n`);
+      serverStartAttempted.current = false;
     }
-  }, [writeToTerminal]);
+  }, [writeToTerminal,terminalRef]);
 
   const restartServer = useCallback(async () => {
+    console.log("🔄 Restart server called...");
+    if(!terminalRef?.current){
+      console.error("Terminal ref not available - cannot restart server");
+      setError("Terminal not available");
+      return;
+    }
+
+    
     try {
-       writeToTerminal("🔄 Restarting server...\r\n");
-      console.log("🔄 Restarting server...");
+      writeToTerminal("🔄 Restarting dev server...\r\n");
+      console.log("🔄 Restarting dev server...");
       setIsServerRunning(false);
       setServerUrl(null);
-      await webContainerService.restartDevServer();
+      serverStartAttempted.current = false;
+      if (webContainerService.isServerRunning()) {
+        webContainerService.stopDevServer();
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      const detected = await webContainerService.detectStartCommand();
+      const command = `${detected.command} ${detected.args.join(' ')}`;
+      await terminalRef.current.runCommand(command);
+      setIsServerRunning(true);
+      serverStartAttempted.current = true;
+
+       
     } catch (err) {
       console.error("Failed to restart server:", err);
       setError(err instanceof Error ? err.message : "Failed to restart server");
        writeToTerminal(`❌ Failed to restart server: ${err instanceof Error ? err.message : "Unknown error"}\r\n`);
     }
-  }, [writeToTerminal]);
+  }, [writeToTerminal,terminalRef]);
 
   const stopServer = useCallback(() => {
     console.log("🛑 Stopping server...");
     webContainerService.stopDevServer();
     setIsServerRunning(false);
     setServerUrl(null);
+    serverStartAttempted.current = false;
   }, []);
 
   return {
@@ -517,6 +641,6 @@ export const useWebContainer = ({
     writeFileSync,
     startServer,
     restartServer,
-    stopServer,
+    stopServer,isReady
   };
 };

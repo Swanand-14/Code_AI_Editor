@@ -29,6 +29,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useWorkspaceAutoSave } from "../hooks/useWorkspaceAutoSave";
+import { webContainerService } from "@/modules/webContainers/services/webContainer-services";
 
 // 🔥 NEW: Import WebContainer components
 import { useCollabWebContainer } from "@/modules/webContainers/hooks/useCollabWebContainer";
@@ -50,7 +51,9 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
   const [isSaving, setIsSaving] = useState(false);
   const [localCursorPosition,setLocalCursorPosition] = useState<{lineNumber:number;column:number}>({lineNumber:1,column:1});
   const [followingUserId, setFollowingUserId] = useState<string | null>(null);
+  const [isReadyTerminal, setIsReadyTerminal] = useState(false);
 const editorInstanceRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+  const autoStartAttempted = useRef(false);
   
   // 🔥 NEW: Preview toggle state
   const [showPreview, setShowPreview] = useState(false);
@@ -125,6 +128,72 @@ useProximityWarnings({
   enabled: true, // Set to false to disable warnings
 });
 
+// 🔥 NEW: Auto-start server when BOTH WebContainer AND Terminal are ready (HOST ONLY)
+useEffect(() => {
+  console.log("🔄 [COLLAB] Auto-start useEffect triggered", {
+    isHost,
+    webContainerReady: webContainer.isReady,
+    terminalReady: isReadyTerminal,
+    serverRunning: webContainer.isServerRunning,
+    autoStartAttempted: autoStartAttempted.current,
+    terminalRefExists: !!terminalRef.current,
+  });
+
+  if (!isHost) {
+    console.log("⏭️ [COLLAB] Skipping auto-start - not host");
+    return;
+  }
+  
+  if (!webContainer.isReady) {
+    console.log("⏳ [COLLAB HOST] WebContainer not ready yet");
+    return;
+  }
+  
+  if (!isReadyTerminal) {
+    console.log("⏳ [COLLAB HOST] Terminal not ready yet");
+    return;
+  }
+  if (!terminalRef.current) {
+    console.log("⏳ [COLLAB HOST] Terminal ref not available yet");
+    return;
+  }
+  
+  if (autoStartAttempted.current) {
+    console.log("⏭️ [COLLAB HOST] Auto-start already attempted");
+    return;
+  }
+  
+  if (webContainer.isServerRunning) {
+    console.log("⏭️ [COLLAB HOST] Server already running");
+    return;
+  }
+  
+  console.log("✅ [COLLAB HOST] All conditions met - scheduling auto-start");
+  autoStartAttempted.current = true;
+  
+  const timer = setTimeout(async () => {
+    console.log("🚀 [COLLAB HOST] Executing auto-start now");
+     if (!terminalRef.current) {
+      console.error("❌ [COLLAB HOST] Terminal ref disappeared - aborting auto-start");
+      autoStartAttempted.current = false;
+      return;
+    }
+    
+    try {
+      await webContainer.startServer();
+      console.log("✅ [COLLAB HOST] Auto-start completed successfully");
+    } catch (err) {
+      console.error("❌ [COLLAB HOST] Auto-start failed:", err);
+      autoStartAttempted.current = false;
+    }
+  }, 2000);
+  
+  return () => {
+    console.log("🧹 [COLLAB] Auto-start useEffect cleanup");
+    clearTimeout(timer);
+  };
+}, [isHost, webContainer.isReady, isReadyTerminal, webContainer.isServerRunning, webContainer.startServer, terminalRef]);
+
 // 🔥 DEBUG: Log when cursors update
 useEffect(() => {
   if (CursorsInCurrentFile.length > 0) {
@@ -143,7 +212,8 @@ useEffect(() => {
       content: string;
       filePath: string;
     }) => {
-      if (payload.userId === user?.id) return;
+      const isPackageJson = payload.filePath === "package.json";
+      if (payload.userId === user?.id && !isPackageJson) return;
 
       console.log(`📡 Received remote change from ${payload.userName} for file ${payload.fileId}`);
 
@@ -270,6 +340,11 @@ useEffect(() => {
     };
   }, [socket, user?.id, session.sessionId, setTemplateData, closeFile]);
 
+
+
+
+  
+
   // 🔥 Save function similar to main playground
   const saveCollabWorkspace = useCallback(
     async (updatedTemplate: TemplateFolder) => {
@@ -297,6 +372,96 @@ useEffect(() => {
     },
     [session.sessionId, user?.id]
   );
+
+    useEffect(() => {
+  if (!webContainer.instance || !templateData) return;
+
+  console.log("🔍 [Collab] Setting up package.json listener...");
+
+  const handlePackageJsonChange = async (data: { content: string }) => {
+    console.log("📦 [Collab] package.json changed in WebContainer!");
+    
+    try {
+      const newPkg = JSON.parse(data.content);
+      console.log("[Collab] New dependencies:", Object.keys(newPkg.dependencies || {}));
+      
+      // Clone template data
+      const updatedTemplateData = JSON.parse(JSON.stringify(templateData));
+      
+      // Find and update package.json in template
+      let found = false;
+      let packageJsonFile : any = null;
+      for (let i = 0; i < updatedTemplateData.items.length; i++) {
+        const item = updatedTemplateData.items[i];
+        if (item.filename === "package" && item.fileExtension === "json") {
+          console.log("✅ [Collab] Updating package.json in template");
+          updatedTemplateData.items[i].content = data.content;
+          packageJsonFile = updatedTemplateData.items[i];
+          found = true;
+          break;
+        }
+      }
+      
+      if (!found || !packageJsonFile) {
+        console.warn("❌ [Collab] package.json not found in template");
+        return;
+      }
+      
+      // Update Zustand store
+      const properFileId = generateFileId(packageJsonFile, updatedTemplateData);
+      console.log("🆔 [Collab] Generated proper fileId:", properFileId);
+      setTemplateData(updatedTemplateData);
+      
+      // 🔥 CRITICAL: Broadcast to other collaborators via socket
+      if (socket) {
+        socket.emit("editor:change", {
+          userId: user?.id,
+          userName: user?.name || "Anonymous",
+          fileId: properFileId, // Special ID for package.json
+          content: data.content,
+          filePath: "package.json",
+        });
+        console.log("📡 [Collab] Broadcasted package.json to collaborators");
+      }
+      
+      // Save to database
+      await saveCollabWorkspace(updatedTemplateData);
+      
+      // Update open file if package.json is open
+      const openPkgJson = openFiles.find(
+        f => f.filename === "package" && f.fileExtension === "json"
+      );
+      
+      if (openPkgJson) {
+        const updatedOpenFiles = openFiles.map(f => 
+          f.id === openPkgJson.id 
+            ? { 
+                ...f, 
+                content: data.content, 
+                originalContent: data.content, 
+                hasUnsavedChanges: false 
+              }
+            : f
+        );
+        setOpenFiles(updatedOpenFiles);
+      }
+      
+      toast.success("📦 package.json synced from terminal");
+      
+    } catch (error) {
+      console.error("[Collab] Failed to sync package.json:", error);
+      toast.error("Failed to sync package.json");
+    }
+  };
+
+  // Register listener
+  webContainerService.on("package-json-changed", handlePackageJsonChange);
+
+  // Cleanup
+  return () => {
+    webContainerService.off("package-json-changed", handlePackageJsonChange);
+  };
+}, [webContainer.instance, templateData, openFiles, setTemplateData, saveCollabWorkspace, setOpenFiles, socket, user]);
 
   // 🔥 Wrapped handlers (same pattern as main playground)
   const wrappedHandleAddFile = useCallback(
@@ -639,6 +804,27 @@ useEffect(() => {
 }, [followingUserId]);
 
 useEffect(() => {
+  if (!isHost) {
+    console.log("⏭️ [COLLAB] Skipping terminal listener - not host");
+    return;
+  }
+  
+  console.log("👂 [COLLAB HOST] Setting up terminal ready listener");
+  
+  const handleTerminalReady = () => {
+    console.log("✅ [COLLAB HOST] Terminal ready event received!");
+    setIsReadyTerminal(true);
+  };
+  
+  window.addEventListener('terminalReady', handleTerminalReady);
+  
+  return () => {
+    console.log("🧹 [COLLAB HOST] Cleaning up terminal listener");
+    window.removeEventListener('terminalReady', handleTerminalReady);
+  };
+}, [isHost]);
+
+useEffect(() => {
 
   if (!editorInstanceRef.current || !followingUserId) return;
 
@@ -720,6 +906,8 @@ useEffect(() => {
 
     const join = async () => {
       try {
+        setIsReadyTerminal(false);
+        autoStartAttempted.current = false;
         console.log("🚀 Starting join process for session:", session.sessionId);
 
         const currentUserData = await currentUser();

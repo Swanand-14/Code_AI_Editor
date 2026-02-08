@@ -8,6 +8,12 @@ class WebContainerService {
   private listeners: Map<string, Set<Function>> = new Map();
   private currentProjectId: string | null = null;
   private sessionId: string | null = null;
+  private detectedPort: number | null = null;
+  
+  // 🔥 NEW: File watcher state
+  private fileWatchers: Map<string, AsyncIterator<any>> = new Map();
+  private packageJsonContent: string | null = null;
+  private packageJsonPollInterval: NodeJS.Timeout | null = null;
 
   async getInstance(): Promise<WebContainer> {
     if (WebContainerService.instance) {
@@ -21,6 +27,8 @@ class WebContainerService {
       .then((instance) => {
         WebContainerService.instance = instance;
         this.setupServerListener(instance);
+        this.setupFileWatchers(instance); // 🔥 NEW
+        
         console.log("✅ WebContainer initialized");
         return instance;
       })
@@ -48,6 +56,58 @@ class WebContainerService {
     });
   }
 
+  
+
+
+  // 🔥 NEW: Setup file watchers for critical files
+   private setupFileWatchers(instance: WebContainer) {
+    console.log("📦 Setting up package.json polling...");
+    this.startPackageJsonPolling(instance);
+  }
+
+
+  // 🔥 NEW: Watch a specific file
+  private async startPackageJsonPolling(instance: WebContainer) {
+    // Read initial content
+    try {
+      this.packageJsonContent = await instance.fs.readFile('/package.json', 'utf-8');
+      console.log("📦 Initial package.json loaded");
+    } catch (error) {
+      console.warn("package.json not found yet");
+    }
+    
+    // Poll every 2 seconds
+    this.packageJsonPollInterval = setInterval(async () => {
+      try {
+        const currentContent = await instance.fs.readFile('/package.json', 'utf-8');
+        
+        // Check if content changed
+        if (this.packageJsonContent && currentContent !== this.packageJsonContent) {
+          console.log("📦 package.json changed - emitting event!");
+          
+          const oldPkg = JSON.parse(this.packageJsonContent);
+          const newPkg = JSON.parse(currentContent);
+          
+          console.log("Old deps:", Object.keys(oldPkg.dependencies || {}));
+          console.log("New deps:", Object.keys(newPkg.dependencies || {}));
+          
+          // Update stored content
+          this.packageJsonContent = currentContent;
+          
+          // Emit change event
+          this.emit("package-json-changed", { content: currentContent });
+        } else if (!this.packageJsonContent) {
+          // First time reading
+          this.packageJsonContent = currentContent;
+        }
+      } catch (error) {
+        // File doesn't exist or can't be read - ignore
+      }
+    }, 2000); // Check every 2 seconds
+    
+    console.log("✅ Package.json polling started (checking every 2s)");
+  }
+
   on(event: string, callback: Function) {
     if (!this.listeners.has(event)) {
       this.listeners.set(event, new Set());
@@ -62,7 +122,6 @@ class WebContainerService {
   private emit(event: string, data: any) {
     const listeners = this.listeners.get(event);
     if (!listeners || listeners.size === 0) {
-      console.warn(`⚠️ No listeners for event: ${event}`);
       return;
     }
     
@@ -93,6 +152,9 @@ class WebContainerService {
     console.log("🧹 Clearing project files...");
     
     this.stopDevServer();
+    
+    // Stop all file watchers
+    this.fileWatchers.clear();
     
     this.serverUrl = null;
     this.sessionId = null;
@@ -129,6 +191,10 @@ class WebContainerService {
       await this.clearProject();
     }
     this.currentProjectId = projectId;
+    
+    // Restart file watchers for new project
+    const instance = await this.getInstance();
+    this.setupFileWatchers(instance);
   }
 
   getCurrentProjectId(): string | null {
@@ -139,17 +205,22 @@ class WebContainerService {
     console.log(`💾 writeFile called for: ${path} (content length: ${content.length})`);
     try {
       const instance = await this.getInstance();
-      const pathParts = path.split("/");
+      const pathParts = path.split("/").filter(Boolean);
       const folderPath = pathParts.slice(0, -1).join("/");
       
       if (folderPath) {
-        console.log(`📁 Creating directory: ${folderPath}`);
-        await instance.fs.mkdir(folderPath, { recursive: true });
+        const fullFolderPath = `/${folderPath}`;
+        console.log(`📁 Creating directory: ${fullFolderPath}`);
+        await instance.fs.mkdir(fullFolderPath, { recursive: true });
       }
       
-      console.log(`✍️ Writing file: ${path}`);
-      await instance.fs.writeFile(path, content);
-      console.log(`✅ Successfully wrote ${path} to WebContainer filesystem`);
+      const fullPath = `/${path.replace(/^\/+/, "")}`;
+      console.log(`✍️ Writing file: ${fullPath}`);
+      await instance.fs.writeFile(fullPath, content);
+      console.log(`✅ Successfully wrote ${fullPath} to WebContainer filesystem`);
+      
+      // 🔥 NEW: Emit write event for terminal/UI sync
+      this.emit("file-written", { path: fullPath, content });
     } catch (error) {
       console.error(`❌ Error writing file ${path}:`, error);
       throw error;
@@ -158,13 +229,15 @@ class WebContainerService {
 
   async readFile(path: string): Promise<string> {
     const instance = await this.getInstance();
-    return await instance.fs.readFile(path, "utf-8");
+    const fullPath = `/${path.replace(/^\/+/, "")}`;
+    return await instance.fs.readFile(fullPath, "utf-8");
   }
 
   async fileExists(path: string): Promise<boolean> {
     try {
       const instance = await this.getInstance();
-      await instance.fs.readFile(path);
+      const fullPath = `/${path.replace(/^\/+/, "")}`;
+      await instance.fs.readFile(fullPath);
       return true;
     } catch {
       return false;
@@ -172,86 +245,115 @@ class WebContainerService {
   }
 
   /**
-   * 🔥 FIX: Detect the correct executable based on installed packages
-   */
-  async detectStartCommand(): Promise<{ command: string; args: string[] }> {
-  try {
-    const packageJson = await this.readFile("package.json");
-    const pkg = JSON.parse(packageJson);
-    const scripts = pkg.scripts || {};
-    const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-
-    console.log("📜 Available scripts:", Object.keys(scripts));
-
-    // Special handling for Next.js
-    if (deps.next) {
-      const nextVersionStr = deps.next;
-      const majorVersion = parseInt(nextVersionStr.match(/\d+/)?.[0] || "13");
+ * 🔥 NEW: Patch Next.js to fix Ctrl+C handling in WebContainer
+ */
+  async patchNextJsForWebContainer(): Promise<void> {
+    try {
+      const instance = await this.getInstance();
       
-      console.log(`📦 Next.js detected: ${nextVersionStr} (major: ${majorVersion})`);
-
-      // Determine the correct dev script based on version
-      let devScript = scripts.dev || "next dev";
-
-      // Parse the current script to see if it already has flags
-      const hasWebpackFlag = devScript.includes("--webpack");
-      const hasExperimentalWebpack = devScript.includes("--experimental-webpack");
-
-      // If package.json already has the correct setup, use it as-is
-      if (scripts.dev && (hasWebpackFlag || hasExperimentalWebpack)) {
-        console.log(`✅ Using existing dev script: ${scripts.dev}`);
-        return { command: "npm", args: ["run", "dev"] };
+      // Check if Next.js is installed
+      const hasNext = await this.fileExists('node_modules/next/dist/server/lib/start-server.js');
+      if (!hasNext) {
+        console.log('ℹ️ Next.js not found, skipping patch');
+        return;
       }
 
-      // Otherwise, construct the appropriate command
-      if (majorVersion >= 16) {
-        console.log("✅ Using 'next dev --webpack' for Next.js 16+");
-        return { command: "npm", args: ["run", "dev"] };
-      } else if (majorVersion === 15) {
-        console.log("✅ Using 'next dev --experimental-webpack' for Next.js 15");
-        return { command: "npm", args: ["run", "dev"] };
+      console.log('🔧 Patching Next.js for WebContainer Ctrl+C handling...');
+      
+      // Read the start-server.js file
+      const filePath = 'node_modules/next/dist/server/lib/start-server.js';
+      let content = await instance.fs.readFile(filePath, 'utf-8');
+      
+      // Replace process.exit('SIGINT') with process.exit(130)
+      // 130 is the standard exit code for SIGINT (128 + 2)
+      const patched = content.replace(
+        /process\.exit\(['"]SIGINT['"]\)/g,
+        'process.exit(130)'
+      );
+      
+      if (patched !== content) {
+        await instance.fs.writeFile(filePath, patched);
+        console.log('✅ Next.js patched successfully for WebContainer');
       } else {
-        console.log("✅ Using plain 'next dev' for Next.js 13-14");
-        return { command: "npm", args: ["run", "dev"] };
+        console.log('ℹ️ Next.js already patched or pattern not found');
       }
+    } catch (error) {
+      console.warn('⚠️ Could not patch Next.js:', error);
+      // Non-critical, continue anyway
     }
-
-    // Priority order for other frameworks
-    if (scripts.dev) {
-      console.log("✅ Using 'dev' script");
-      return { command: "npm", args: ["run", "dev"] };
-    }
-    
-    if (scripts.start) {
-      console.log("✅ Using 'start' script");
-      return { command: "npm", args: ["start"] };
-    }
-    
-    if (scripts.serve) {
-      console.log("✅ Using 'serve' script");
-      return { command: "npm", args: ["run", "serve"] };
-    }
-
-    console.warn("⚠️ No dev/start/serve script found, defaulting to 'npm start'");
-    return { command: "npm", args: ["start"] };
-  } catch (error) {
-    console.error("❌ Failed to read package.json:", error);
-    return { command: "npm", args: ["run", "dev"] };
   }
-}
-handleServerError(callback: (data: { code: number }) => void) {
-  this.on("server-error", callback);
-}
-
 
   /**
-   * 🔥 NEW: Verify that critical binaries exist after npm install
+   * 🔥 ENHANCED: Detect correct start command with better version detection
+   */
+  async detectStartCommand(): Promise<{ command: string; args: string[] }> {
+    try {
+      const packageJson = await this.readFile("package.json");
+      const pkg = JSON.parse(packageJson);
+      const scripts = pkg.scripts || {};
+      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+
+      console.log("📜 Available scripts:", Object.keys(scripts));
+
+      // Special handling for Next.js
+      if (deps.next) {
+        const nextVersionStr = deps.next;
+        const majorVersion = parseInt(nextVersionStr.match(/\d+/)?.[0] || "13");
+        
+        console.log(`📦 Next.js detected: ${nextVersionStr} (major: ${majorVersion})`);
+
+        let devScript = scripts.dev || "next dev";
+        const hasWebpackFlag = devScript.includes("--webpack");
+        const hasExperimentalWebpack = devScript.includes("--experimental-webpack");
+
+        if (scripts.dev && (hasWebpackFlag || hasExperimentalWebpack)) {
+          console.log(`✅ Using existing dev script: ${scripts.dev}`);
+          return { command: "npm", args: ["run", "dev"] };
+        }
+
+        // Use plain next dev for all versions (13-16+)
+        console.log("✅ Using plain 'next dev' (recommended for all versions)");
+        return { command: "npm", args: ["run", "dev"] };
+      }
+
+      // Priority order for other frameworks
+      if (scripts.dev) {
+        console.log("✅ Using 'dev' script");
+        return { command: "npm", args: ["run", "dev"] };
+      }
+      
+      if (scripts.start) {
+        console.log("✅ Using 'start' script");
+        return { command: "npm", args: ["start"] };
+      }
+      
+      if (scripts.serve) {
+        console.log("✅ Using 'serve' script");
+        return { command: "npm", args: ["run", "serve"] };
+      }
+
+      console.warn("⚠️ No dev/start/serve script found, defaulting to 'npm start'");
+      return { command: "npm", args: ["start"] };
+    } catch (error) {
+      console.error("❌ Failed to read package.json:", error);
+      return { command: "npm", args: ["run", "dev"] };
+    }
+  }
+
+  /**
+   * 🔥 NEW: Error handler for server failures
+   */
+  handleServerError(callback: (data: { code: number }) => void) {
+    this.on("server-error", callback);
+  }
+
+  /**
+   * 🔥 ENHANCED: Verify binaries with better detection
    */
   async verifyBinaries(): Promise<boolean> {
     try {
       const instance = await this.getInstance();
       
-      // Check if .bin directory exists
       try {
         const binFiles = await instance.fs.readdir('/node_modules/.bin');
         console.log(`📂 .bin directory has ${binFiles.length} files`);
@@ -273,12 +375,15 @@ handleServerError(callback: (data: { code: number }) => void) {
   }
 
   /**
-   * 🔥 FIXED: Install dependencies with proper .bin setup
+   * 🔥 ENHANCED: Install with output streaming to terminal
    */
   async installDependencies(onOutput?: (data: string) => void): Promise<number> {
     const instance = await this.getInstance();
     
     console.log("📦 Installing dependencies...");
+    onOutput?.("📦 Installing dependencies...\r\n");
+    onOutput?.("This may take a few minutes...\r\n\r\n");
+    
     const installProcess = await instance.spawn("npm", ["install"]);
 
     if (onOutput) {
@@ -295,16 +400,41 @@ handleServerError(callback: (data: { code: number }) => void) {
     
     if (exitCode !== 0) {
       console.error(`❌ npm install failed with code ${exitCode}`);
+      onOutput?.(`\r\n❌ npm install failed with exit code ${exitCode}\r\n`);
       return exitCode;
     }
     
     console.log("✅ npm install completed");
+    onOutput?.("\r\n✅ npm install completed successfully\r\n");
+    
+    // 🔥 FIX: Read updated package.json and package-lock.json and emit change event
+    try {
+      const packageJsonContent = await instance.fs.readFile('/package.json', 'utf-8');
+      console.log("📦 Emitting package.json change event after install");
+      
+      // Trigger file change detection to sync UI
+      this.emit("package-json-changed", { 
+        content: packageJsonContent,
+        isAfterInstall: true
+      });
+      
+      // Also try to read package-lock.json to confirm install
+      try {
+        const lockContent = await instance.fs.readFile('/package-lock.json', 'utf-8');
+        console.log("🔒 package-lock.json updated");
+      } catch (e) {
+        console.warn("package-lock.json not found");
+      }
+    } catch (error) {
+      console.error("Failed to read package.json after install:", error);
+    }
     
     // 🔥 FIX: Verify and fix .bin directory
     const binariesOk = await this.verifyBinaries();
     
     if (!binariesOk) {
       console.log("🔧 Running npm rebuild to fix .bin symlinks...");
+      onOutput?.("🔧 Running npm rebuild...\r\n");
       
       const rebuildProcess = await instance.spawn("npm", ["rebuild"]);
       
@@ -322,84 +452,88 @@ handleServerError(callback: (data: { code: number }) => void) {
       
       if (rebuildExit === 0) {
         console.log("✅ npm rebuild completed");
+        onOutput?.("✅ npm rebuild completed\r\n");
         
-        // Verify again
         const binariesOkAfterRebuild = await this.verifyBinaries();
         if (!binariesOkAfterRebuild) {
           console.error("❌ .bin directory still not set up correctly after rebuild");
         }
       } else {
         console.error(`❌ npm rebuild failed with code ${rebuildExit}`);
+        onOutput?.(`❌ npm rebuild failed with exit code ${rebuildExit}\r\n`);
       }
     }
     
     return exitCode;
   }
 
-async startDevServer(
-  command?: string,
-  args?: string[],
-  onOutput?: (data: string) => void
-): Promise<void> {
-  if (this.devServerProcess) {
-    console.log("⚠️ Dev server already running");
-    return;
-  }
+  /**
+   * 🔥 ENHANCED: Start dev server with proper output streaming
+   */
+  async startDevServer(
+    command?: string,
+    args?: string[],
+    onOutput?: (data: string) => void
+  ): Promise<void> {
+    if (this.devServerProcess) {
+      console.log("⚠️ Dev server already running");
+      onOutput?.("⚠️ Dev server already running\r\n");
+      return;
+    }
 
-  const instance = await this.getInstance();
-  let finalCommand = command;
-  let finalArgs = args;
-  
-  if (!command || !args) {
-    const detected = await this.detectStartCommand();
-    finalCommand = detected.command;
-    finalArgs = detected.args;
-  }
-  
-  console.log(`🚀 Starting server: ${finalCommand} ${finalArgs!.join(" ")}`);
-  
-  const outputStream = new WritableStream({
-    write: (data) => {
-      console.log("📝 Server output:", data);
-      this.detectServerUrlFromOutput(data);
-      if (onOutput) onOutput(data);
-    },
-  });
-
-  try {
-    this.devServerProcess = await instance.spawn(finalCommand!, finalArgs!);
-    this.devServerProcess.output.pipeTo(outputStream);
-
-    this.devServerProcess.exit.then((code: number) => {
-      console.log(`Dev server exited with code ${code}`);
-      this.devServerProcess = null;
-      
-      if (code !== 0 && code !== 143) { // 143 is SIGTERM (normal shutdown)
-        console.error("❌ Server failed to start");
-        this.emit("server-error", { code });
-      }
+    const instance = await this.getInstance();
+    let finalCommand = command;
+    let finalArgs = args;
+    
+    if (!command || !args) {
+      const detected = await this.detectStartCommand();
+      finalCommand = detected.command;
+      finalArgs = detected.args;
+    }
+    
+    console.log(`🚀 Starting server: ${finalCommand} ${finalArgs!.join(" ")}`);
+    onOutput?.(`🚀 Starting server: ${finalCommand} ${finalArgs!.join(" ")}\r\n\r\n`);
+    
+    const outputStream = new WritableStream({
+      write: (data) => {
+        console.log("📝 Server output:", data);
+        this.detectServerUrlFromOutput(data);
+        if (onOutput) onOutput(data);
+      },
     });
-  } catch (error) {
-    console.error("❌ Failed to spawn dev server:", error);
-    this.devServerProcess = null;
-    this.emit("server-error", { code: -1 });
-    throw error;
+
+    try {
+      this.devServerProcess = await instance.spawn(finalCommand!, finalArgs!);
+      this.devServerProcess.output.pipeTo(outputStream);
+
+      this.devServerProcess.exit.then((code: number) => {
+        console.log(`Dev server exited with code ${code}`);
+        this.devServerProcess = null;
+        this.emit("server-stopped", { code });
+        
+        if (code !== 0 && code !== 143) {
+          console.error("❌ Server failed to start");
+          onOutput?.(`\r\n❌ Server exited with code ${code}\r\n`);
+          this.emit("server-error", { code });
+        }
+      });
+    } catch (error) {
+      console.error("❌ Failed to spawn dev server:", error);
+      onOutput?.(`❌ Failed to start server: ${error}\r\n`);
+      this.devServerProcess = null;
+      this.emit("server-error", { code: -1 });
+      throw error;
+    }
   }
-}
 
   private detectServerUrlFromOutput(output: string): void {
     if (this.serverUrl) return;
 
-    const patterns = [
-      /Local:?\s+(https?:\/\/[^\s]+)/i,
-      /listening on (https?:\/\/[^\s]+)/i,
-      /server running at (https?:\/\/[^\s]+)/i,
-      /available at (https?:\/\/[^\s]+)/i,
-      /(https?:\/\/localhost:\d+)/i,
-      /(https?:\/\/127\.0\.0\.1:\d+)/i,
-      /(https?:\/\/[a-z0-9-]+\.webcontainer\.io)/i,
-      /ready on (https?:\/\/[^\s]+)/i,
-    ];
+     const patterns = [
+    /(https?:\/\/[a-z0-9-]+\.webcontainer\.io)/i,
+    /(https?:\/\/[a-z0-9-]+--\d+--[a-z0-9]+\.local-corp\.webcontainer-api\.io)/i,
+    /Server ready at:?\s+(https?:\/\/[^\s]+webcontainer[^\s]+)/i,
+  ];
 
     for (const pattern of patterns) {
       const match = output.match(pattern);
@@ -424,6 +558,7 @@ async startDevServer(
 
   async restartDevServer(onOutput?: (data: string) => void): Promise<void> {
     console.log("🔄 Restarting dev server...");
+    onOutput?.("🔄 Restarting dev server...\r\n");
 
     if (this.devServerProcess) {
       this.devServerProcess.kill();
@@ -439,6 +574,7 @@ async startDevServer(
   stopDevServer(): void {
     if (this.devServerProcess) {
       console.log("🛑 Stopping dev server...");
+      this.emit("server-stopped", {});
       this.devServerProcess.kill();
       this.devServerProcess = null;
       this.serverUrl = null;
@@ -449,7 +585,8 @@ async startDevServer(
   async directoryExists(path: string): Promise<boolean> {
     try {
       const instance = await this.getInstance();
-      await instance.fs.readdir(path);
+      const fullPath = `/${path.replace(/^\/+/, "")}`;
+      await instance.fs.readdir(fullPath);
       return true;
     } catch (error) {
       return false;
@@ -463,6 +600,10 @@ async startDevServer(
   destroy(): void {
     console.log("🗑️ Destroying WebContainer instance");
     this.stopDevServer();
+    
+    // Stop all file watchers
+    this.fileWatchers.clear();
+    
     if (WebContainerService.instance) {
       WebContainerService.instance.teardown();
       WebContainerService.instance = null;

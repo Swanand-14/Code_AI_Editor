@@ -22,6 +22,7 @@ interface WebContainerPreviewProps {
   templateData?: any;
   terminalRef?: React.RefObject<TerminalRef>; // Accept terminal ref from parent
   showTerminal?: boolean;
+  onServerReady?: (url: string) => void;
 }
 
 export const WebContainerPreview = ({
@@ -33,7 +34,7 @@ export const WebContainerPreview = ({
   className,
   templateData,
   terminalRef: externalTerminalRef,
-  showTerminal = true, // Receive ref from parent
+  showTerminal = true,onServerReady // Receive ref from parent
 }: WebContainerPreviewProps) => {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const internalTerminalRef = useRef<TerminalRef>(null);
@@ -46,6 +47,7 @@ export const WebContainerPreview = ({
   const healthCheckInterval = useRef<NodeJS.Timeout>();
   const fileChangeDebounceRef = useRef<NodeJS.Timeout>();
   const healthCheckAttempts = useRef(0);
+  const [terminalServerUrl, setTerminalServerUrl] = useState<string | null>(null);
 
   // Health check for server readiness
   useEffect(() => {
@@ -140,6 +142,104 @@ export const WebContainerPreview = ({
       }
     };
   }, [isPreviewReady]);
+
+
+
+  useEffect(() => {
+    if (!serverUrl) return;
+
+    let wasServerDown = false;
+    let consecutiveFailures = 0;
+    let hasShownDownMessage = false;
+
+    const checkServerStatus = async () => {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1500);
+        
+        await fetch(serverUrl, {
+          method: "HEAD",
+          mode: "no-cors",
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+        consecutiveFailures = 0;
+
+        if (wasServerDown && iframeRef.current) {
+          console.log("✅ Server back online via health check - auto-refreshing preview");
+          setIsPreviewReady(true);
+          setPreviewError(null);
+          handleForceRefresh();
+          wasServerDown = false;
+          hasShownDownMessage = false;
+        }
+      } catch (error) {
+        consecutiveFailures++;
+        
+        if (consecutiveFailures >= 3 && !wasServerDown) {
+          console.log("⚠️ Server appears down via health check");
+          wasServerDown = true;
+          
+          if (!hasShownDownMessage) {
+            setIsPreviewReady(false);
+            setPreviewError("Server stopped - waiting for restart...");
+            hasShownDownMessage = true;
+          }
+        }
+      }
+    };
+
+    const statusInterval = setInterval(checkServerStatus, 1000);
+    return () => clearInterval(statusInterval);
+  }, [serverUrl]);
+
+useEffect(() => {
+  if (!instance) return;
+
+  const handleServerStopped = (data?: { code?: number }) => {
+    console.log("🛑 Server stopped event received", data);
+    
+    // Show "restarting" message
+    setIsPreviewReady(false);
+    setPreviewError("Server restarting...");
+    
+    // Clear the iframe to show loading state
+    if (iframeRef.current) {
+      iframeRef.current.src = "about:blank";
+    }
+  };
+
+  const handleServerStarted = ({ url }: { port: number; url: string }) => {
+    console.log("🚀 Server started event received:", url);
+    
+    // Wait a bit for server to be fully ready
+    setTimeout(() => {
+      setIsPreviewReady(true);
+      setPreviewError(null);
+      
+      // Auto-refresh the preview with new URL
+      if (iframeRef.current && url) {
+        console.log("🔄 Auto-loading new server URL");
+        setCurrentUrl(url);
+        iframeRef.current.src = url;
+      }
+    }, 1500); // Wait 1.5 seconds for server to fully start
+  };
+
+  
+  const { webContainerService } = require("../services/webContainer-services");
+  
+  // Subscribe to events
+  webContainerService.on("server-stopped", handleServerStopped);
+  webContainerService.on("server-ready", handleServerStarted);
+
+  // Cleanup
+  return () => {
+    webContainerService.off("server-stopped", handleServerStopped);
+    webContainerService.off("server-ready", handleServerStarted);
+  };
+}, [instance]);
   
 
   const handleForceRefresh = async () => {
@@ -367,6 +467,7 @@ export const WebContainerPreview = ({
           webContainerInstance={instance}
           theme="dark"
           className="h-full"
+         onServerReady={onServerReady}
         />
       </ResizablePanel>
     </ResizablePanelGroup>
@@ -458,6 +559,7 @@ export const WebContainerPreview = ({
           webContainerInstance={instance}
           theme="dark"
           className="h-full"
+          onServerReady={onServerReady}
         />
       </ResizablePanel>
     </ResizablePanelGroup>

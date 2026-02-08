@@ -635,9 +635,21 @@ export function CollabEditor({
       // Update refs
       previousFileId.current = fileId;
       isInitialMount.current = false;
+    } else if (initialContent !== content) {
+      // Same file but content changed (e.g., package.json updated from WebContainer)
+      console.log(`📝 Content updated for file: ${fileId}`);
+      setContent(initialContent);
+      
+      if (editorRef.current) {
+        isRemoteChange.current = true;
+        editorRef.current.setValue(initialContent);
+        
+        setTimeout(() => {
+          isRemoteChange.current = false;
+        }, 50);
+      }
     }
-    // ❌ DON'T update on initialContent changes - that causes cursor jumps!
-  }, [fileId]); // ✅ Only depend on fileId, NOT initialContent
+  }, [fileId, initialContent]); // ✅ Now also depends on initialContent for external updates
 
   useEffect(() => {
     return () => {

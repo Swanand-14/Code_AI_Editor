@@ -40,7 +40,9 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable"
-import { TerminalRef } from "@/modules/playground/components/terminal"
+import TerminalComponent,{TerminalRef} from "@/modules/webContainers/components/terminal"
+import { set } from "zod"
+import { webContainerService } from "@/modules/webContainers/services/webContainer-services"
 
 interface GitHubFile {
   name: string
@@ -80,9 +82,13 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([""]))
   const [showDiff, setShowDiff] = useState(false)
   const [showPreview, setShowPreview] = useState(false)
+  const terminalRef = useRef<TerminalRef>(null)
+  const [isTerminalReady, setIsTerminalReady] = useState(false)
+  const autoStartAttempted = useRef(false);
+
   
   const router = useRouter()
-  const terminalRef = useRef<TerminalRef>(null)
+  
 
   // WebContainer integration
   const {
@@ -97,6 +103,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
     restartServer,
     stopServer,
     writeFileSync,
+    isReady
   } = useWebContainerForGithub({
     files,
     repoFullName,
@@ -106,8 +113,16 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
   })
 
   useEffect(() => {
+    autoStartAttempted.current = false;
+    setIsTerminalReady(false);
     loadRepositoryTree()
+    
+
   }, [currentBranch])
+
+
+  
+
 
   async function loadRepositoryTree(retryCount = 0, maxTries = 3) {
     setIsLoadingTree(true)
@@ -152,6 +167,172 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
       setIsLoadingTree(false)
     }
   }
+
+  useEffect(()=>{
+const handleTerminalReady =  () => {
+  console.log("Terminal ready event received");
+  setIsTerminalReady(true);
+
+}
+
+window.addEventListener("terminalReady", handleTerminalReady);
+return ()=>{
+  window.removeEventListener("terminalReady", handleTerminalReady);
+}
+
+  },[])
+
+useEffect(() => {
+  console.log("🔄 [GITHUB] Auto-start useEffect triggered", {
+    isReady,
+    isTerminalReady,
+    isServerRunning,
+    autoStartAttempted: autoStartAttempted.current,
+    isSupported: isWebContainerSupported
+  });
+
+  if (!isWebContainerSupported) {
+    console.log("⏭️ [GITHUB] Skipping auto-start - project not supported");
+    return;
+  }
+  
+  if (!isReady) {
+    console.log("⏳ [GITHUB] WebContainer not ready yet");
+    return;
+  }
+  
+  if (!isTerminalReady) {
+    console.log("⏳ [GITHUB] Terminal not ready yet");
+    return;
+  }
+  
+  if (autoStartAttempted.current) {
+    console.log("⏭️ [GITHUB] Auto-start already attempted");
+    return;
+  }
+  
+  if (isServerRunning) {
+    console.log("⏭️ [GITHUB] Server already running");
+    return;
+  }
+  
+  console.log("✅ [GITHUB] All conditions met - scheduling auto-start");
+  autoStartAttempted.current = true;
+  
+  const timer = setTimeout(async () => {
+    console.log("🚀 [GITHUB] Executing auto-start now");
+    
+    try {
+      await startServer();
+      setShowPreview(true); // Auto-show preview
+      console.log("✅ [GITHUB] Auto-start completed successfully");
+    } catch (err) {
+      console.error("❌ [GITHUB] Auto-start failed:", err);
+      autoStartAttempted.current = false;
+    }
+  }, 1500);
+  
+  return () => {
+    console.log("🧹 [GITHUB] Auto-start useEffect cleanup");
+    clearTimeout(timer);
+  };
+}, [isReady, isTerminalReady, isServerRunning, isWebContainerSupported, startServer]);
+
+useEffect(()=>{
+  if(!isWebContainerSupported || !webContainerInstance)return;
+  console.log("📡 Setting up package.json event listeners");
+  const handlePackageJsonChange = async (data: { content: string }) => {
+    console.log("📦 [GITHUB] package.json changed in WebContainer!");
+    
+    try {
+      const newPkg = JSON.parse(data.content);
+      console.log("[GITHUB] New dependencies:", Object.keys(newPkg.dependencies || {}));
+      
+      // Find package.json in files array
+      const packageJsonFile = files.find(
+        f => f.path === "package.json" || f.path.endsWith("/package.json")
+      );
+      
+      if (!packageJsonFile) {
+        console.warn("❌ [GITHUB] package.json not found in files");
+        return;
+      }
+      
+      // Update files array
+      const updatedFiles = files.map(f => 
+        f.path === packageJsonFile.path
+          ? { ...f, content: data.content }
+          : f
+      );
+      
+      setFiles(updatedFiles);
+      
+      // 🔥 If package.json is currently open, update it
+      if (openFile?.path === packageJsonFile.path) {
+        console.log("📝 [GITHUB] Updating open package.json file");
+        setOpenFile({
+          ...openFile,
+          content: data.content,
+          originalContent: data.content,
+          hasChanges: false
+        });
+      }
+      
+      //  OPTIONAL: Auto-commit to GitHub
+      // 
+      /*
+      const commitResult = await saveFileToGitHub(
+        owner,
+        repo,
+        packageJsonFile.path,
+        data.content,
+        "Update dependencies from terminal",
+        packageJsonFile.sha,
+        currentBranch
+      );
+      
+      if (commitResult.success) {
+        console.log("✅ [GITHUB] Auto-committed package.json");
+        toast.success("📦 Dependencies auto-committed to GitHub");
+        
+        // Update SHA
+        const updatedFilesWithSha = updatedFiles.map(f =>
+          f.path === packageJsonFile.path
+            ? { ...f, sha: commitResult.data.content.sha }
+            : f
+        );
+        setFiles(updatedFilesWithSha);
+        
+        if (openFile?.path === packageJsonFile.path) {
+          setOpenFile(prev => prev ? { ...prev, sha: commitResult.data.content.sha } : null);
+        }
+      }
+      */
+      
+      toast.success("📦 package.json synced from terminal");
+      
+    } catch (error) {
+      console.error("[GITHUB] Failed to sync package.json:", error);
+      toast.error("Failed to sync package.json");
+    }
+
+   
+  };
+
+   webContainerService.on("package-json-changed", handlePackageJsonChange);
+
+    return () => {
+    webContainerService.off("package-json-changed", handlePackageJsonChange);
+  };
+},[isWebContainerSupported, 
+  webContainerInstance, 
+  files, 
+  openFile, 
+  setFiles, 
+  setOpenFile,
+  owner,
+  repo,
+  currentBranch])
 
   function handleBranchChange(branch: string) {
     setOpenFile(null)
@@ -473,67 +654,62 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
           </div>
 
           {/* WebContainer Status & Controls */}
+         
           {isWebContainerSupported && (
-            <div className="pt-2 border-t space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${isServerRunning ? 'bg-green-500' : 'bg-gray-400'}`} />
-                  <span className="text-xs font-medium">
-                    {projectType || "Web Project"}
-                  </span>
-                </div>
-              </div>
-              
-              <div className="flex gap-1">
-                {!isServerRunning ? (
-                  <Button
-                    size="sm"
-                    onClick={() => {
-                      startServer()
-                      setShowPreview(true)
-                    }}
-                    disabled={isWebContainerLoading}
-                    className="flex-1"
-                  >
-                    <Play className="h-3 w-3 mr-1" />
-                    Run
-                  </Button>
-                ) : (
-                  <>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={stopServer}
-                      className="flex-1"
-                    >
-                      <Square className="h-3 w-3 mr-1" />
-                      Stop
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={restartServer}
-                      className="flex-1"
-                    >
-                      <RefreshCw className="h-3 w-3 mr-1" />
-                      Restart
-                    </Button>
-                  </>
-                )}
-              </div>
-              
-              {isServerRunning && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setShowPreview(!showPreview)}
-                  className="w-full"
-                >
-                  {showPreview ? "Hide" : "Show"} Preview
-                </Button>
-              )}
-            </div>
-          )}
+  <div className="pt-2 border-t space-y-2">
+    <div className="flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        <div className={`w-2 h-2 rounded-full ${isServerRunning ? 'bg-green-500' : 'bg-gray-400'}`} />
+        <span className="text-xs font-medium">
+          {isServerRunning ? `${projectType} (Running)` : projectType || "Web Project"}
+        </span>
+      </div>
+    </div>
+    
+    {/* Show controls only when server is running */}
+    {isServerRunning && (
+      <>
+        <div className="flex gap-1">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={stopServer}
+            className="flex-1"
+          >
+            <Square className="h-3 w-3 mr-1" />
+            Stop
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={restartServer}
+            className="flex-1"
+          >
+            <RefreshCw className="h-3 w-3 mr-1" />
+            Restart
+          </Button>
+        </div>
+        
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => setShowPreview(!showPreview)}
+          className="w-full"
+        >
+          {showPreview ? "Hide" : "Show"} Preview
+        </Button>
+      </>
+    )}
+    
+    {/* Loading state */}
+    {!isServerRunning && isWebContainerLoading && (
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="h-3 w-3 animate-spin" />
+        <span>Starting server...</span>
+      </div>
+    )}
+  </div>
+)}
 
           {!isWebContainerSupported && !isLoadingTree && files.length > 0 && (
             <div className="pt-2 border-t">
@@ -664,23 +840,28 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
             </div>
           </div>
         </ResizablePanel>
+       
 
         {/* Preview Panel (conditionally rendered) */}
-        {showPreview && isWebContainerSupported && (
-          <>
-            <ResizableHandle />
-            <ResizablePanel defaultSize={50} minSize={30}>
-              <WebContainerPreview
-                serverUrl={serverUrl}
-                isLoading={isWebContainerLoading}
-                error={webContainerError}
-                instance={webContainerInstance}
-                onRestartServer={restartServer}
-                terminalRef={terminalRef}
-              />
-            </ResizablePanel>
-          </>
-        )}
+       { isWebContainerSupported && (
+  <>
+    <ResizableHandle />
+    <ResizablePanel defaultSize={50} minSize={30}>
+      <WebContainerPreview
+        serverUrl={serverUrl}
+        isLoading={isWebContainerLoading}
+        error={webContainerError}
+        instance={webContainerInstance}
+        onRestartServer={restartServer}
+        terminalRef={terminalRef}
+        showTerminal={true}
+        onServerReady={(url) => {
+          console.log("📡 Terminal detected server URL:", url);
+        }}
+      />
+    </ResizablePanel>
+  </>
+)}
       </ResizablePanelGroup>
 
       {/* Dialogs (commit, new file, delete, etc.) */}
