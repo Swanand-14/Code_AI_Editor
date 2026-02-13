@@ -41,24 +41,30 @@ interface FileExplorerState{
   handleDeleteFile: (
     file: TemplateFile, 
     parentPath: string, 
+    instance: any, 
     saveTemplateData: (data: TemplateFolder) => Promise<void>
   ) => Promise<void>;
   handleDeleteFolder: (
     folder: TemplateFolder,
     parentPath: string,
+    instance: any, 
     saveTemplateData: (data: TemplateFolder) => Promise<void>
   ) => Promise<void>;
   handleRenameFile: (
     file: TemplateFile,
     newFilename: string,
     newExtension: string,
+     
     parentPath: string,
+    instance: any,
     saveTemplateData: (data: TemplateFolder) => Promise<void>
   ) => Promise<void>;
   handleRenameFolder: (
     folder: TemplateFolder,
     newFolderName: string,
+     
     parentPath: string,
+    instance: any,
     saveTemplateData: (data: TemplateFolder) => Promise<void>
   ) => Promise<void>;
   updateFileContent: (fileId: string, content: string) => void;
@@ -269,7 +275,7 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
     );
 
     // 🔥 CRITICAL: Write to WebContainer FIRST
-    if (writeFileSync && instance) {
+    if (instance && instance.fs) {
       // Ensure parent directories exist
       const pathParts = filePath.split('/');
       if (pathParts.length > 1) {
@@ -283,7 +289,7 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
       }
 
       // Write the file with content
-      await writeFileSync(filePath, fileContent);
+      await instance.fs.writeFile(filePath, fileContent,'utf-8');
       console.log(`✅ File written to WebContainer: ${filePath}`);
     } else {
       console.error("❌ writeFileSync or instance not available!");
@@ -365,11 +371,27 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
     toast.error("Failed to create folder");
   }
 },
-    handleDeleteFile: async (file, parentPath, saveTemplateData) => {
+    handleDeleteFile: async (file, parentPath,instance:any, saveTemplateData) => {
     const { templateData, openFiles } = get();
     if (!templateData) return;
 
     try {
+
+      const filePath = parentPath
+          ? `${parentPath}/${file.filename}.${file.fileExtension}`
+          : `${file.filename}.${file.fileExtension}`;
+
+       console.log(`🗑️ Deleting file from WebContainer: ${filePath}`);
+        
+        if (instance && instance.fs) {
+          try {
+            await instance.fs.rm(filePath);
+            console.log(`✅ File deleted from WebContainer: ${filePath}`);
+          } catch (error) {
+            console.warn(`⚠️ File may not exist in WebContainer: ${filePath}`, error);
+          }
+        }
+
       const updatedTemplateData = JSON.parse(
         JSON.stringify(templateData)
       ) as TemplateFolder;
@@ -412,11 +434,26 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
       toast.error("Failed to delete file");
     }
   },
-  handleDeleteFolder: async (folder, parentPath, saveTemplateData) => {
+  handleDeleteFolder: async (folder, parentPath,instance:any, saveTemplateData) => {
     const { templateData } = get();
     if (!templateData) return;
 
     try {
+      const folderPath = parentPath
+          ? `${parentPath}/${folder.folderName}`
+          : folder.folderName;
+        
+        console.log(`🗑️ Deleting folder from WebContainer: ${folderPath}`);
+        
+        if (instance && instance.fs) {
+          try {
+            await instance.fs.rm(folderPath, { recursive: true, force: true });
+            console.log(`✅ Folder deleted from WebContainer: ${folderPath}`);
+          } catch (error) {
+            console.warn(`⚠️ Folder may not exist in WebContainer: ${folderPath}`, error);
+          }
+        }
+
       const updatedTemplateData = JSON.parse(
         JSON.stringify(templateData)
       ) as TemplateFolder;
@@ -463,11 +500,54 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
       toast.error("Failed to delete folder");
     }
   },
-    handleRenameFolder: async (folder, newFolderName, parentPath, saveTemplateData) => {
+    handleRenameFolder: async (folder, newFolderName, parentPath, instance:any,saveTemplateData) => {
     const { templateData } = get();
     if (!templateData) return;
 
     try {
+
+       const oldPath = parentPath
+          ? `${parentPath}/${folder.folderName}`
+          : folder.folderName;
+        
+        const newPath = parentPath
+          ? `${parentPath}/${newFolderName}`
+          : newFolderName;
+        
+        console.log(`✏️ Renaming folder in WebContainer: ${oldPath} → ${newPath}`);
+        
+        if (instance && instance.fs) {
+          try {
+            // Create new folder
+            await instance.fs.mkdir(newPath, { recursive: true });
+            
+            // Copy all contents recursively
+            const copyDir = async (src: string, dest: string) => {
+              const entries = await instance.fs.readdir(src, { withFileTypes: true });
+              
+              for (const entry of entries) {
+                const srcPath = `${src}/${entry.name}`;
+                const destPath = `${dest}/${entry.name}`;
+                
+                if (entry.isDirectory()) {
+                  await instance.fs.mkdir(destPath, { recursive: true });
+                  await copyDir(srcPath, destPath);
+                } else {
+                  const content = await instance.fs.readFile(srcPath, 'utf-8');
+                  await instance.fs.writeFile(destPath, content, 'utf-8');
+                }
+              }
+            };
+            
+            await copyDir(oldPath, newPath);
+            
+            // Delete old folder
+            await instance.fs.rm(oldPath, { recursive: true, force: true });
+            console.log(`✅ Folder renamed in WebContainer`);
+          } catch (error) {
+            console.warn(`⚠️ Error renaming folder in WebContainer:`, error);
+          }
+        }
       const updatedTemplateData = JSON.parse(
         JSON.stringify(templateData)
       ) as TemplateFolder;
@@ -521,11 +601,34 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
     }));
   },
 
-  handleRenameFile:async(file,newFilename,newExtension,parentPath,saveTemplateData)=>{
+  handleRenameFile:async(file,newFilename,newExtension,parentPath,instance:any,saveTemplateData)=>{
     const { templateData,openFiles } = get();
     if (!templateData) return;
 
     try {
+      const oldPath = parentPath
+          ? `${parentPath}/${file.filename}.${file.fileExtension}`
+          : `${file.filename}.${file.fileExtension}`;
+        
+        const newPath = parentPath
+          ? `${parentPath}/${newFilename}.${newExtension}`
+          : `${newFilename}.${newExtension}`;
+        
+        console.log(`✏️ Renaming file in WebContainer: ${oldPath} → ${newPath}`);
+        
+        if (instance && instance.fs) {
+          try {
+            // Read the old file content
+            const content = await instance.fs.readFile(oldPath, 'utf-8');
+            // Write to new path
+            await instance.fs.writeFile(newPath, content, 'utf-8');
+            // Delete old file
+            await instance.fs.rm(oldPath);
+            console.log(`✅ File renamed in WebContainer`);
+          } catch (error) {
+            console.warn(`⚠️ Error renaming file in WebContainer:`, error);
+          }
+        }
       const updatedTemplateData = JSON.parse(JSON.stringify(templateData)) as TemplateFolder;
       const pathParts = parentPath.split("/");
       let currentFolder = updatedTemplateData;

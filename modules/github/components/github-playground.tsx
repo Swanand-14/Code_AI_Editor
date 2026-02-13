@@ -43,6 +43,7 @@ import {
 import TerminalComponent,{TerminalRef} from "@/modules/webContainers/components/terminal"
 import { set } from "zod"
 import { webContainerService } from "@/modules/webContainers/services/webContainer-services"
+import { fileCreationWatcher } from "@/modules/webContainers/services/fileWatcher"
 
 interface GitHubFile {
   name: string
@@ -85,7 +86,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
   const terminalRef = useRef<TerminalRef>(null)
   const [isTerminalReady, setIsTerminalReady] = useState(false)
   const autoStartAttempted = useRef(false);
-
+  const manuallyCreatedFilesRef = useRef<Set<string>>(new Set());
   
   const router = useRouter()
   
@@ -440,6 +441,9 @@ useEffect(()=>{
 
   async function handleCreateFile(path: string, filename: string) {
     const fullPath = path ? `${path}/${filename}` : filename
+
+    manuallyCreatedFilesRef.current.add(fullPath);
+  setTimeout(() => manuallyCreatedFilesRef.current.delete(fullPath), 3000);
     
     const result = await createFileInGitHub(
       owner,
@@ -480,6 +484,13 @@ useEffect(()=>{
   async function handleCreateFolder(path: string, folderName: string) {
     const fullPath = path ? `${path}/${folderName}` : folderName
 
+     manuallyCreatedFilesRef.current.add(fullPath);
+  manuallyCreatedFilesRef.current.add(`${fullPath}/.gitkeep`);
+  setTimeout(() => {
+    manuallyCreatedFilesRef.current.delete(fullPath);
+    manuallyCreatedFilesRef.current.delete(`${fullPath}/.gitkeep`);
+  }, 3000);
+
     const result = await createFolderInGitHub(
       owner,
       repo,
@@ -518,6 +529,8 @@ useEffect(()=>{
 
   async function handleDeleteFile() {
     if (!fileToDelete) return
+    manuallyCreatedFilesRef.current.add(fileToDelete.path);
+  setTimeout(() => manuallyCreatedFilesRef.current.delete(fileToDelete.path), 3000);
 
     const result = await deleteFileFromGitHub(
       owner,
@@ -548,7 +561,10 @@ useEffect(()=>{
   }
 
   async function handleDeleteFolder() {
-    if (!folderToDelete) return
+    if (!folderToDelete) return;
+
+    manuallyCreatedFilesRef.current.add(folderToDelete.path);
+  setTimeout(() => manuallyCreatedFilesRef.current.delete(folderToDelete.path), 3000);
 
     const filesToDelete = files
       .filter(file => 
@@ -614,6 +630,215 @@ useEffect(()=>{
     window.addEventListener("keydown", handleKeyDown)
     return () => window.removeEventListener("keydown", handleKeyDown)
   }, [openFile])
+
+  useEffect(()=>{
+    if (!webContainerInstance || !isReady || !isWebContainerSupported) return;
+  
+  console.log("🚀 [GITHUB] Starting file watcher...");
+  
+  // 🔥 FILE CREATED
+  const handleFileCreated = async (filePath: string, parentPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(filePath)) {
+      console.log(`⏭️ Ignoring manually created: ${filePath}`);
+      return;
+    }
+    
+    console.log(`📄 [GITHUB] File created: ${filePath}`);
+    
+    try {
+      const content = await webContainerInstance.fs.readFile(`/${filePath}`, 'utf-8');
+      
+      // Add to local files state (no GitHub commit)
+      const newFile: GitHubFile = {
+        name: filePath.split('/').pop() || '',
+        path: filePath,
+        sha: '', // Empty SHA - not committed yet
+        size: content.length,
+        type: 'file',
+        content,
+        url: '',
+      };
+      
+      setFiles(prev => [...prev, newFile]);
+      
+      // Expand parent directory if needed
+      if (parentPath) {
+        setExpandedDirs(prev => new Set([...prev, parentPath]));
+      }
+      
+      toast.success(`📄 Created ${newFile.name} (not committed)`, {
+        description: 'Edit and commit when ready'
+      });
+    } catch (error) {
+      console.error(`❌ Failed to add file:`, error);
+    }
+  };
+
+  // 🔥 FOLDER CREATED
+  const handleFolderCreated = async (folderPath: string, parentPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(folderPath)) {
+      console.log(`⏭️ Ignoring manually created: ${folderPath}`);
+      return;
+    }
+    
+    console.log(`📁 [GITHUB] Folder created: ${folderPath}`);
+    
+    try {
+      // Add .gitkeep file to represent folder in local state
+      const gitkeepPath = `${folderPath}/.gitkeep`;
+      
+      const newFile: GitHubFile = {
+        name: '.gitkeep',
+        path: gitkeepPath,
+        sha: '',
+        size: 0,
+        type: 'file',
+        content: '',
+        url: '',
+      };
+      
+      setFiles(prev => [...prev, newFile]);
+      
+      // Expand parent and new folder
+      setExpandedDirs(prev => new Set([...prev, parentPath, folderPath].filter(Boolean)));
+      
+      toast.success(`📁 Created ${folderPath.split('/').pop()}/ (not committed)`, {
+        description: 'Commit when ready'
+      });
+    } catch (error) {
+      console.error(`❌ Failed to create folder:`, error);
+    }
+  };
+  const handleFileDeleted = async (filePath: string, parentPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(filePath)) return;
+    
+    console.log(`🗑️ [GITHUB] File deleted: ${filePath}`);
+    
+    try {
+      // Remove from local state
+      setFiles(prev => prev.filter(f => f.path !== filePath));
+      
+      // Close if currently open
+      if (openFile?.path === filePath) {
+        setOpenFile(null);
+      }
+      
+      toast.info(`🗑️ Deleted ${filePath.split('/').pop()} (not committed)`, {
+        description: 'Changes not committed to GitHub'
+      });
+    } catch (error) {
+      console.error(`❌ Failed to delete file:`, error);
+    }
+  };
+  const handleFolderDeleted = async (folderPath: string, parentPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(folderPath)) return;
+    
+    console.log(`🗑️ [GITHUB] Folder deleted: ${folderPath}`);
+    
+    try {
+      // Remove all files in folder from local state
+      setFiles(prev => prev.filter(f => 
+        !f.path.startsWith(folderPath + '/') && f.path !== folderPath
+      ));
+      
+      // Close if currently open file is in this folder
+      if (openFile && openFile.path.startsWith(folderPath + '/')) {
+        setOpenFile(null);
+      }
+      
+      // Collapse folder
+      setExpandedDirs(prev => {
+        const next = new Set(prev);
+        next.delete(folderPath);
+        Array.from(next).forEach(path => {
+          if (path.startsWith(folderPath + '/')) next.delete(path);
+        });
+        return next;
+      });
+      
+      toast.info(`🗑️ Deleted ${folderPath.split('/').pop()}/ (not committed)`, {
+        description: 'Changes not committed to GitHub'
+      });
+    } catch (error) {
+      console.error(`❌ Failed to delete folder:`, error);
+    }
+  };
+  const handleFileRenamed = async (oldPath: string, newPath: string, parentPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(newPath)) return;
+    
+    console.log(`✏️ [GITHUB] File renamed: ${oldPath} → ${newPath}`);
+    
+    try {
+      // Find old file
+      const oldFile = files.find(f => f.path === oldPath);
+      if (!oldFile) {
+        console.warn(`File not found: ${oldPath}`);
+        return;
+      }
+      
+      // Read new content from WebContainer
+      const content = await webContainerInstance.fs.readFile(`/${newPath}`, 'utf-8');
+      
+      // Create new file entry
+      const newFile: GitHubFile = {
+        ...oldFile,
+        name: newPath.split('/').pop() || '',
+        path: newPath,
+        sha: '', // Empty SHA - rename not committed
+        content,
+      };
+      
+      // Update files state (remove old, add new)
+      setFiles(prev => [
+        ...prev.filter(f => f.path !== oldPath),
+        newFile
+      ]);
+      
+      // Update open file if it was the renamed file
+      if (openFile?.path === oldPath) {
+        setOpenFile({
+          path: newPath,
+          content,
+          originalContent: content,
+          sha: '',
+          hasChanges: false,
+        });
+      }
+      
+      // Track new path to prevent duplicate
+      manuallyCreatedFilesRef.current.add(newPath);
+      setTimeout(() => manuallyCreatedFilesRef.current.delete(newPath), 3000);
+      
+      toast.info(`✏️ Renamed ${oldPath.split('/').pop()} → ${newPath.split('/').pop()} (not committed)`, {
+        description: 'Commit when ready'
+      });
+    } catch (error) {
+      console.error(`❌ Failed to rename file:`, error);
+    }
+  };
+  fileCreationWatcher.initialize(
+    webContainerInstance,
+    handleFileCreated,
+    handleFolderCreated,
+    ['node_modules', '.git', '.next', 'dist', 'build', '.vercel'],
+    {
+      onFileDeleted: handleFileDeleted,
+      onFolderDeleted: handleFolderDeleted,
+      onFileRenamed: handleFileRenamed,
+    }
+  );
+  return () => {
+    console.log("🧹 [GITHUB] Cleaning up file watcher");
+    fileCreationWatcher.stop();
+  };
+  },[webContainerInstance,
+  isReady,
+  isWebContainerSupported,
+  files,
+  openFile,
+  setFiles,
+  setOpenFile,
+  setExpandedDirs,])
 
   return (
     <div className="flex h-screen">
