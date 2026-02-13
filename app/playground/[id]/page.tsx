@@ -49,6 +49,8 @@ import { convertTemplateToFiles } from "@/modules/playground/lib/template-to-fil
 import { useRouter } from "next/navigation";
 import TerminalComponent,{TerminalRef} from "@/modules/webContainers/components/terminal";
 import { set } from "zod";
+import { fileCreationWatcher } from "@/modules/webContainers/services/fileWatcher";
+
 
 
 
@@ -60,6 +62,7 @@ function MainPlaygroundPage() {
   const [terminalServerUrl, setTerminalServerUrl] = React.useState<string | null>(null);
   const [isTerminalReady, setIsTerminalReady] = useState(false);
   const router = useRouter();
+  const manuallyCreatedFilesRef = useRef<Set<string>>(new Set());
 
   const { playgroundData, templateData, isLoading, error, saveTemplateData } =
     usePlayground(id);
@@ -340,6 +343,8 @@ useEffect(() => {
     
   },[templateData, openFiles, setTemplateData, setOpenFiles])
 
+
+
   const handleCreateRepo = async (data: RepoCreationData) => {
     if(!templateData){
       toast.error("No template data available")
@@ -377,7 +382,18 @@ useEffect(() => {
   }
 
   const wrappedHandleAddFile = useCallback(
-    (newFile: TemplateFile, parentPath: string) => {
+    async(newFile: TemplateFile, parentPath: string) => {
+
+      const filePath = parentPath
+      ? `${parentPath}/${newFile.filename}.${newFile.fileExtension}`
+      : `${newFile.filename}.${newFile.fileExtension}`;
+    
+    manuallyCreatedFilesRef.current.add(filePath);
+    
+    // Clear after 2 seconds (give watcher time to see it)
+    setTimeout(() => {
+      manuallyCreatedFilesRef.current.delete(filePath);
+    }, 2000);
       return handleAddFile(
         newFile,
         parentPath,
@@ -390,7 +406,17 @@ useEffect(() => {
   );
 
   const wrappedHandleAddFolder = useCallback(
-    (newFolder: TemplateFolder, parentPath: string) => {
+    async(newFolder: TemplateFolder, parentPath: string) => {
+
+      const folderPath = parentPath
+      ? `${parentPath}/${newFolder.folderName}`
+      : newFolder.folderName;
+    
+    manuallyCreatedFilesRef.current.add(folderPath);
+    
+    setTimeout(() => {
+      manuallyCreatedFilesRef.current.delete(folderPath);
+    }, 2000);
       return handleAddFolder(
         newFolder,
         parentPath,
@@ -403,52 +429,113 @@ useEffect(() => {
 
   const wrappedHandleDeleteFile = useCallback(
     (file: TemplateFile, parentPath: string) => {
-      return handleDeleteFile(file, parentPath, saveTemplateData);
+      return handleDeleteFile(file, parentPath,webContainerInstance, saveTemplateData);
     },
-    [handleDeleteFile, saveTemplateData]
+    [handleDeleteFile, saveTemplateData,webContainerInstance]
   );
 
   const wrappedHandleDeleteFolder = useCallback(
     (folder: TemplateFolder, parentPath: string) => {
-      return handleDeleteFolder(folder, parentPath, saveTemplateData);
+      return handleDeleteFolder(folder, parentPath,webContainerInstance, saveTemplateData);
     },
-    [handleDeleteFolder, saveTemplateData]
+    [handleDeleteFolder, saveTemplateData,webContainerInstance]
   );
 
   const wrappedHandleRenameFile = useCallback(
-    (
+    async(
       file: TemplateFile,
       newFilename: string,
       newExtension: string,
       parentPath: string
     ) => {
+      const newFilePath = parentPath
+      ? `${parentPath}/${newFilename}.${newExtension}`
+      : `${newFilename}.${newExtension}`;
+    
+    const oldFilePath = parentPath
+      ? `${parentPath}/${file.filename}.${file.fileExtension}`
+      : `${file.filename}.${file.fileExtension}`;
+    
+    console.log(`🏷️ Tracking renamed file to ignore: ${newFilePath}`);
+    manuallyCreatedFilesRef.current.add(newFilePath);
+    
+    // Also remove old path from tracking if it was there
+    manuallyCreatedFilesRef.current.delete(oldFilePath);
+    
+    // Clear after 3 seconds (give watcher time to see it)
+    setTimeout(() => {
+      manuallyCreatedFilesRef.current.delete(newFilePath);
+      console.log(`🧹 Stopped ignoring: ${newFilePath}`);
+    }, 3000);
       return handleRenameFile(
         file,
         newFilename,
         newExtension,
         parentPath,
+        webContainerInstance,
         saveTemplateData
       );
     },
-    [handleRenameFile, saveTemplateData]
+    [handleRenameFile, saveTemplateData,webContainerInstance,]
   );
 
   const wrappedHandleRenameFolder = useCallback(
-    (folder: TemplateFolder, newFolderName: string, parentPath: string) => {
+    async(folder: TemplateFolder, newFolderName: string, parentPath: string) => {
+      const newFolderPath = parentPath
+      ? `${parentPath}/${newFolderName}`
+      : newFolderName;
+    
+    const oldFolderPath = parentPath
+      ? `${parentPath}/${folder.folderName}`
+      : folder.folderName;
+    
+    console.log(`🏷️ Tracking renamed folder to ignore: ${newFolderPath}`);
+    manuallyCreatedFilesRef.current.add(newFolderPath);
+    
+    // Remove old path from tracking
+    manuallyCreatedFilesRef.current.delete(oldFolderPath);
+    
+    // Recursively track all files inside the renamed folder
+    const trackFolderContents = (folder: TemplateFolder, basePath: string) => {
+      folder.items.forEach((item) => {
+        if ('filename' in item) {
+          const filePath = `${basePath}/${item.filename}.${item.fileExtension}`;
+          manuallyCreatedFilesRef.current.add(filePath);
+          console.log(`  🏷️ Tracking nested file: ${filePath}`);
+        } else if ('folderName' in item) {
+          const subFolderPath = `${basePath}/${item.folderName}`;
+          manuallyCreatedFilesRef.current.add(subFolderPath);
+          console.log(`  🏷️ Tracking nested folder: ${subFolderPath}`);
+          trackFolderContents(item, subFolderPath);
+        }
+      });
+    };
+    
+    trackFolderContents(folder, newFolderPath);
+    
+    // Clear after 3 seconds
+    setTimeout(() => {
+      manuallyCreatedFilesRef.current.delete(newFolderPath);
+      console.log(`🧹 Stopped ignoring: ${newFolderPath}`);
+    }, 3000);
       return handleRenameFolder(
         folder,
         newFolderName,
         parentPath,
+        webContainerInstance,
         saveTemplateData
       );
     },
-    [handleRenameFolder, saveTemplateData]
+    [handleRenameFolder, saveTemplateData,webContainerInstance,]
   );
 
   const activeFile = openFiles.find((file) => file.id === activeFileId);
   const hasUnsavedChanges = openFiles.some((file) => file.hasUnsavedChanges);
 
   const handleFileSelect = (file: TemplateFile) => openFile(file);
+
+
+
 
   const handleSave = useCallback(
     async (fileId?: string) => {
@@ -549,6 +636,246 @@ useEffect(() => {
       setOpenFiles,
     ]
   );
+
+
+  useEffect(() => {
+  if (!webContainerInstance || !templateData || !isReady) {
+    console.log("⏳ [FileWatcher] Not ready yet");
+    return;
+  }
+  console.log("🚀 [FileWatcher] Starting file creation watcher...");
+  const handleFileCreated = async (filePath: string, parentPath: string) => {
+
+     if (manuallyCreatedFilesRef.current.has(filePath)) {
+      console.log(`⏭️ [FileWatcher] Ignoring manually created file: ${filePath}`);
+      return;
+    }
+    console.log(`📄 [FileWatcher] File created: ${filePath} in ${parentPath || "root"}`);
+    
+    try {
+      // Read file content from WebContainer
+      const content = await webContainerInstance.fs.readFile(`/${filePath}`, 'utf-8');
+      
+      // Parse file path
+      const pathParts = filePath.split('/');
+      const fileName = pathParts.pop() || '';
+      const [filename, ...extensionParts] = fileName.split('.');
+      const extension = extensionParts.join('.') || 'txt';
+      
+      // Create TemplateFile object
+      const newFile: TemplateFile = {
+        id: '', // Will be set by handleAddFile
+        filename,
+        fileExtension: extension,
+        content,
+        playgroundId: id,
+        folderId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      
+      // Add to file explorer using existing handler
+      await wrappedHandleAddFile(newFile, parentPath);
+      
+      toast.success(`📄 Created ${fileName} via terminal`);
+      
+    } catch (error) {
+      console.error(`❌ [FileWatcher] Failed to add file ${filePath}:`, error);
+    }
+  };
+
+  const handleFolderCreated = async (folderPath: string, parentPath: string) => {
+
+    if (manuallyCreatedFilesRef.current.has(folderPath)) {
+      console.log(`⏭️ [FileWatcher] Ignoring manually created folder: ${folderPath}`);
+      return;
+    }
+    console.log(`📁 [FileWatcher] Folder created: ${folderPath} in ${parentPath || "root"}`);
+    
+    try {
+      const folderName = folderPath.split('/').pop() || '';
+      
+      // Create TemplateFolder object
+      const newFolder: TemplateFolder = {
+        folderName,
+        items: [],
+        playgroundId: id,
+        parentFolderId: null,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      
+      // Add to file explorer using existing handler
+      await wrappedHandleAddFolder(newFolder, parentPath);
+      
+      toast.success(`📁 Created ${folderName}/ via terminal`);
+      
+    } catch (error) {
+      console.error(`❌ [FileWatcher] Failed to add folder ${folderPath}:`, error);
+    }
+  };
+
+
+  const handleFileDeleted = async (filePath: string, parentPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(filePath)) return;
+    
+    console.log(`🗑️ [FileWatcher] File deleted: ${filePath}`);
+    
+    try {
+      const currentTemplate = useFileExplorer.getState().templateData;
+      if (!currentTemplate) return;
+
+      const fileName = filePath.split('/').pop() || '';
+      const [filename, ...extensionParts] = fileName.split('.');
+      const extension = extensionParts.join('.');
+      
+      // Find file in template
+      const findFileInTemplate = (items: any[]): any => {
+        for (const item of items) {
+          if ('folderName' in item) {
+            const found = findFileInTemplate(item.items);
+            if (found) return found;
+          } else {
+            const itemPath = item.path 
+              ? `${item.path}/${item.filename}.${item.fileExtension}`
+              : `${item.filename}.${item.fileExtension}`;
+            
+            if (itemPath === filePath) {
+              return { file: item, parentPath: item.path || '' };
+            }
+          }
+        }
+        return null;
+      };
+
+      const result = findFileInTemplate(currentTemplate.items);
+      if (result) {
+        await handleDeleteFile(result.file, result.parentPath, null, saveTemplateData);
+        toast.info(`🗑️ Deleted ${fileName} via terminal`);
+      }
+    } catch (error) {
+      console.error(`❌ [FileWatcher] Failed to delete file:`, error);
+    }
+  };
+
+  // Handle folder deletion from terminal
+  const handleFolderDeleted = async (folderPath: string, parentPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(folderPath)) return;
+    
+    console.log(`🗑️ [FileWatcher] Folder deleted: ${folderPath}`);
+    
+    try {
+      const currentTemplate = useFileExplorer.getState().templateData;
+      if (!currentTemplate) return;
+
+      const folderName = folderPath.split('/').pop() || '';
+      
+      const findFolderInTemplate = (items: any[], targetPath: string, currentPath: string = ''): any => {
+        for (const item of items) {
+          if ('folderName' in item) {
+            const itemFullPath = currentPath ? `${currentPath}/${item.folderName}` : item.folderName;
+            
+            if (itemFullPath === targetPath) {
+              return { folder: item, parentPath: currentPath };
+            }
+            
+            const found = findFolderInTemplate(item.items, targetPath, itemFullPath);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+
+      const result = findFolderInTemplate(currentTemplate.items, folderPath);
+      if (result) {
+        await handleDeleteFolder(result.folder, result.parentPath, null, saveTemplateData);
+        toast.info(`🗑️ Deleted ${folderName}/ via terminal`);
+      }
+    } catch (error) {
+      console.error(`❌ [FileWatcher] Failed to delete folder:`, error);
+    }
+  };
+
+  // Handle file rename from terminal
+  const handleFileRenamed = async (oldPath: string, newPath: string, parentPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(newPath)) return;
+    
+    console.log(`✏️ [FileWatcher] File renamed: ${oldPath} → ${newPath}`);
+    
+    try {
+      const currentTemplate = useFileExplorer.getState().templateData;
+      if (!currentTemplate) return;
+
+      const oldFileName = oldPath.split('/').pop() || '';
+      const [oldFilename, ...oldExtParts] = oldFileName.split('.');
+      const oldExtension = oldExtParts.join('.');
+
+      const newFileName = newPath.split('/').pop() || '';
+      const [newFilename, ...newExtParts] = newFileName.split('.');
+      const newExtension = newExtParts.join('.');
+
+      const findFileInTemplate = (items: any[]): any => {
+        for (const item of items) {
+          if ('folderName' in item) {
+            const found = findFileInTemplate(item.items);
+            if (found) return found;
+          } else {
+            const itemPath = item.path 
+              ? `${item.path}/${item.filename}.${item.fileExtension}`
+              : `${item.filename}.${item.fileExtension}`;
+            
+            if (itemPath === oldPath) {
+              return { file: item, parentPath: item.path || '' };
+            }
+          }
+        }
+        return null;
+      };
+
+      const result = findFileInTemplate(currentTemplate.items);
+      if (result) {
+        manuallyCreatedFilesRef.current.add(newPath);
+        setTimeout(() => manuallyCreatedFilesRef.current.delete(newPath), 3000);
+        
+        await handleRenameFile(
+          result.file,
+          newFilename,
+          newExtension,
+          result.parentPath,
+          null,
+          saveTemplateData
+        );
+        
+        toast.info(`✏️ Renamed ${oldFileName} → ${newFileName} via terminal`);
+      }
+    } catch (error) {
+      console.error(`❌ [FileWatcher] Failed to rename file:`, error);
+    }
+  };
+
+  fileCreationWatcher.initialize(
+    webContainerInstance,
+    handleFileCreated,
+    handleFolderCreated,
+    ['node_modules', '.git', '.next', 'dist', 'build', '.vercel'],
+    {
+      onFileDeleted: handleFileDeleted,
+      onFolderDeleted: handleFolderDeleted,
+      onFileRenamed: handleFileRenamed,
+    }
+  );
+
+  // Cleanup
+  return () => {
+    console.log("🧹 [FileWatcher] Cleaning up");
+    fileCreationWatcher.stop();
+  };
+},[webContainerInstance, 
+  templateData, 
+  isReady, 
+  id, 
+  wrappedHandleAddFile, 
+  wrappedHandleAddFolder])
 
   const handleSaveAll = async () => {
     const unsavedFiles = openFiles.filter((item) => item.hasUnsavedChanges);

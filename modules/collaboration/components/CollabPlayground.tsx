@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, use } from "react";
 import { Users, Clock, AlertCircle, Wifi, WifiOff, FileText, X, Save, Play, Square, RotateCcw } from "lucide-react"; // 🔥 Added Play, Square, RotateCcw
 import { toast } from "sonner";
 import { joinCollabSession } from "../actions";
@@ -39,6 +39,7 @@ import TerminalComponent, { TerminalRef } from "@/modules/webContainers/componen
 import { useCollabParticipants } from "../hooks/useCollabParticipants";
 import { ParticipantsPanel } from "./ParticipantsPanel";
 import { getEditorLanguage } from "@/modules/playground/lib/editor-config";
+import { fileCreationWatcher } from "@/modules/webContainers/services/fileWatcher";
 
 interface CollabPlaygroundProps {
   session: CollabSessionData;
@@ -53,6 +54,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
   const [followingUserId, setFollowingUserId] = useState<string | null>(null);
   const [isReadyTerminal, setIsReadyTerminal] = useState(false);
 const editorInstanceRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+const manuallyCreatedFilesRef = useRef<Set<string>>(new Set());
   const autoStartAttempted = useRef(false);
   
   // 🔥 NEW: Preview toggle state
@@ -466,18 +468,28 @@ useEffect(() => {
   // 🔥 Wrapped handlers (same pattern as main playground)
   const wrappedHandleAddFile = useCallback(
     async (newFile: TemplateFile, parentPath: string) => {
+      const filePath = parentPath
+        ? `${parentPath}/${newFile.filename}.${newFile.fileExtension}`
+        : `${newFile.filename}.${newFile.fileExtension}`;
+      
+      console.log(`🏷️ [Collab] Tracking new file to ignore: ${filePath}`);
+      manuallyCreatedFilesRef.current.add(filePath);
+      
+      setTimeout(() => {
+        manuallyCreatedFilesRef.current.delete(filePath);
+        console.log(`🧹 [Collab] Stopped ignoring: ${filePath}`);
+      }, 3000);
+
       const result = await handleAddFile(
         newFile,
         parentPath,
         async () => { },
-        null,
+        webContainer.instance,
         saveCollabWorkspace
       );
 
       // 🔥 Emit file creation to other participants
-      const filePath = parentPath
-        ? `${parentPath}/${newFile.filename}.${newFile.fileExtension}`
-        : `${newFile.filename}.${newFile.fileExtension}`;
+      
 
       emitFileAction({
         action: "create",
@@ -489,22 +501,31 @@ useEffect(() => {
 
       return result;
     },
-    [handleAddFile, saveCollabWorkspace, emitFileAction]
+    [handleAddFile, saveCollabWorkspace, emitFileAction,webContainer.instance]
   );
 
   const wrappedHandleAddFolder = useCallback(
     async (newFolder: TemplateFolder, parentPath: string) => {
+      const folderPath = parentPath
+        ? `${parentPath}/${newFolder.folderName}`
+        : newFolder.folderName;
+      
+      console.log(`🏷️ [Collab] Tracking new folder to ignore: ${folderPath}`);
+      manuallyCreatedFilesRef.current.add(folderPath);
+      
+      setTimeout(() => {
+        manuallyCreatedFilesRef.current.delete(folderPath);
+        console.log(`🧹 [Collab] Stopped ignoring: ${folderPath}`);
+      }, 3000);
       const result = await handleAddFolder(
         newFolder,
         parentPath,
-        null,
+        webContainer.instance,
         saveCollabWorkspace
       );
 
       // 🔥 Emit folder creation to other participants
-      const folderPath = parentPath
-        ? `${parentPath}/${newFolder.folderName}`
-        : newFolder.folderName;
+     
 
       emitFileAction({
         action: "create",
@@ -516,17 +537,20 @@ useEffect(() => {
 
       return result;
     },
-    [handleAddFolder, saveCollabWorkspace, emitFileAction]
+    [handleAddFolder, saveCollabWorkspace, emitFileAction,webContainer.instance]
   );
 
   const wrappedHandleDeleteFile = useCallback(
     async (file: TemplateFile, parentPath: string) => {
-      const result = await handleDeleteFile(file, parentPath, saveCollabWorkspace);
+      const result = await handleDeleteFile(file, parentPath, webContainer.instance,saveCollabWorkspace);
 
       // 🔥 Emit file deletion to other participants
       const filePath = parentPath
         ? `${parentPath}/${file.filename}.${file.fileExtension}`
         : `${file.filename}.${file.fileExtension}`;
+
+        manuallyCreatedFilesRef.current.delete(filePath);
+      console.log(`🗑️ [Collab] Removing file from tracking: ${filePath}`);
 
       emitFileAction({
         action: "delete",
@@ -537,17 +561,20 @@ useEffect(() => {
 
       return result;
     },
-    [handleDeleteFile, saveCollabWorkspace, emitFileAction]
+    [handleDeleteFile, saveCollabWorkspace, emitFileAction,webContainer.instance]
   );
 
   const wrappedHandleDeleteFolder = useCallback(
     async (folder: TemplateFolder, parentPath: string) => {
-      const result = await handleDeleteFolder(folder, parentPath, saveCollabWorkspace);
+      const result = await handleDeleteFolder(folder, parentPath, webContainer.instance,saveCollabWorkspace);
 
       // 🔥 Emit folder deletion to other participants
       const folderPath = parentPath
         ? `${parentPath}/${folder.folderName}`
         : folder.folderName;
+
+        manuallyCreatedFilesRef.current.delete(folderPath);
+      console.log(`🗑️ [Collab] Removing folder from tracking: ${folderPath}`);
 
       emitFileAction({
         action: "delete",
@@ -558,7 +585,7 @@ useEffect(() => {
 
       return result;
     },
-    [handleDeleteFolder, saveCollabWorkspace, emitFileAction]
+    [handleDeleteFolder, saveCollabWorkspace, emitFileAction,webContainer.instance]
   );
 
   const wrappedHandleRenameFile = useCallback(
@@ -576,11 +603,21 @@ useEffect(() => {
         ? `${parentPath}/${newFilename}.${newExtension}`
         : `${newFilename}.${newExtension}`;
 
+        console.log(`🏷️ [Collab] Tracking renamed file to ignore: ${newPath}`);
+      manuallyCreatedFilesRef.current.add(newPath);
+      manuallyCreatedFilesRef.current.delete(oldPath);
+      
+      setTimeout(() => {
+        manuallyCreatedFilesRef.current.delete(newPath);
+        console.log(`🧹 [Collab] Stopped ignoring: ${newPath}`);
+      }, 3000);
+
       const result = await handleRenameFile(
         file,
         newFilename,
         newExtension,
         parentPath,
+        webContainer.instance,
         saveCollabWorkspace
       );
 
@@ -595,7 +632,7 @@ useEffect(() => {
 
       return result;
     },
-    [handleRenameFile, saveCollabWorkspace, emitFileAction]
+    [handleRenameFile, saveCollabWorkspace, emitFileAction,webContainer.instance]
   );
 
   const wrappedHandleRenameFolder = useCallback(
@@ -608,10 +645,38 @@ useEffect(() => {
         ? `${parentPath}/${newFolderName}`
         : newFolderName;
 
+      console.log(`🏷️ [Collab] Tracking renamed folder to ignore: ${newPath}`);
+      manuallyCreatedFilesRef.current.add(newPath);
+      manuallyCreatedFilesRef.current.delete(oldPath);
+      
+      // Track nested files
+      const trackFolderContents = (folder: TemplateFolder, basePath: string) => {
+        folder.items.forEach((item) => {
+          if ('filename' in item) {
+            const filePath = `${basePath}/${item.filename}.${item.fileExtension}`;
+            manuallyCreatedFilesRef.current.add(filePath);
+            console.log(`  🏷️ [Collab] Tracking nested file: ${filePath}`);
+          } else if ('folderName' in item) {
+            const subFolderPath = `${basePath}/${item.folderName}`;
+            manuallyCreatedFilesRef.current.add(subFolderPath);
+            console.log(`  🏷️ [Collab] Tracking nested folder: ${subFolderPath}`);
+            trackFolderContents(item, subFolderPath);
+          }
+        });
+      };
+      
+      trackFolderContents(folder, newPath);
+      
+      setTimeout(() => {
+        manuallyCreatedFilesRef.current.delete(newPath);
+        console.log(`🧹 [Collab] Stopped ignoring: ${newPath}`);
+      }, 3000);
+
       const result = await handleRenameFolder(
         folder,
         newFolderName,
         parentPath,
+        webContainer.instance,
         saveCollabWorkspace
       );
 
@@ -626,7 +691,7 @@ useEffect(() => {
 
       return result;
     },
-    [handleRenameFolder, saveCollabWorkspace, emitFileAction]
+    [handleRenameFolder, saveCollabWorkspace, emitFileAction,webContainer.instance]
   );
 
   // 🔥 File selection handler
@@ -887,6 +952,125 @@ editorInstanceRef.current.revealLineInCenterIfOutsideViewport(
   // Auto-scroll to target line
   
 }, [remoteCursors,activeFile,templateData,handleFileSelect,CursorsInCurrentFile, followingUserId]);
+
+
+useEffect(() => {
+  if (!webContainer.instance || !templateData || !webContainer.isReady || !isHost) return;
+  
+  console.log("🚀 [Collab] Starting file watcher...");
+  
+  const handleFileCreated = async (filePath: string, parentPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(filePath)) return;
+    try {
+      const content = await webContainer.instance!.fs.readFile(`/${filePath}`, 'utf-8');
+      const fileName = filePath.split('/').pop() || '';
+      const [filename, ...ext] = fileName.split('.');
+      await handleAddFile({
+        id: '', filename, fileExtension: ext.join('.') || 'txt', content,
+        playgroundId: session.sessionId, folderId: null,
+        createdAt: new Date(), updatedAt: new Date(),
+      }, parentPath, async () => {}, webContainer.instance, saveCollabWorkspace);
+      emitFileAction({ action: "create", filePath, content });
+      toast.success(`📄 Created ${fileName}`);
+    } catch (err) { console.error(err); }
+  };
+
+  const handleFolderCreated = async (folderPath: string, parentPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(folderPath)) return;
+    try {
+      await handleAddFolder({
+        folderName: folderPath.split('/').pop() || '', items: [],
+        playgroundId: session.sessionId, parentFolderId: null,
+        createdAt: new Date(), updatedAt: new Date(),
+      }, parentPath, webContainer.instance, saveCollabWorkspace);
+      emitFileAction({ action: "create", filePath: folderPath, content: "" });
+      toast.success(`📁 Created ${folderPath.split('/').pop()}/`);
+    } catch (err) { console.error(err); }
+  };
+
+  const handleFileDeleted = async (filePath: string) => {
+    if (manuallyCreatedFilesRef.current.has(filePath)) return;
+    try {
+      const currentTemplate = useFileExplorer.getState().templateData;
+      if (!currentTemplate) return;
+      const findFile = (items: any[]): any => {
+        for (const item of items) {
+          if ('folderName' in item) { const found = findFile(item.items); if (found) return found; }
+          else {
+            const p = item.path ? `${item.path}/${item.filename}.${item.fileExtension}` : `${item.filename}.${item.fileExtension}`;
+            if (p === filePath) return { file: item, parentPath: item.path || '' };
+          }
+        }
+      };
+      const result = findFile(currentTemplate.items);
+      if (result) {
+        await handleDeleteFile(result.file, result.parentPath, null, saveCollabWorkspace);
+        emitFileAction({ action: "delete", filePath });
+        toast.info(`🗑️ Deleted ${filePath.split('/').pop()}`);
+      }
+    } catch (err) { console.error(err); }
+  };
+
+  const handleFolderDeleted = async (folderPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(folderPath)) return;
+    try {
+      const currentTemplate = useFileExplorer.getState().templateData;
+      if (!currentTemplate) return;
+      const findFolder = (items: any[], target: string, curr = ''): any => {
+        for (const item of items) {
+          if ('folderName' in item) {
+            const p = curr ? `${curr}/${item.folderName}` : item.folderName;
+            if (p === target) return { folder: item, parentPath: curr };
+            const found = findFolder(item.items, target, p);
+            if (found) return found;
+          }
+        }
+      };
+      const result = findFolder(currentTemplate.items, folderPath);
+      if (result) {
+        await handleDeleteFolder(result.folder, result.parentPath, null, saveCollabWorkspace);
+        emitFileAction({ action: "delete", filePath: folderPath });
+        toast.info(`🗑️ Deleted ${folderPath.split('/').pop()}/`);
+      }
+    } catch (err) { console.error(err); }
+  };
+
+  const handleFileRenamed = async (oldPath: string, newPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(newPath)) return;
+    try {
+      const currentTemplate = useFileExplorer.getState().templateData;
+      if (!currentTemplate) return;
+      const findFile = (items: any[]): any => {
+        for (const item of items) {
+          if ('folderName' in item) { const found = findFile(item.items); if (found) return found; }
+          else {
+            const p = item.path ? `${item.path}/${item.filename}.${item.fileExtension}` : `${item.filename}.${item.fileExtension}`;
+            if (p === oldPath) return { file: item, parentPath: item.path || '' };
+          }
+        }
+      };
+      const result = findFile(currentTemplate.items);
+      if (result) {
+        const [newFilename, ...newExt] = newPath.split('/').pop()!.split('.');
+        manuallyCreatedFilesRef.current.add(newPath);
+        setTimeout(() => manuallyCreatedFilesRef.current.delete(newPath), 3000);
+        await handleRenameFile(result.file, newFilename, newExt.join('.'), result.parentPath, null, saveCollabWorkspace);
+        emitFileAction({ action: "rename", filePath: oldPath, newPath });
+        toast.info(`✏️ Renamed`);
+      }
+    } catch (err) { console.error(err); }
+  };
+
+  fileCreationWatcher.initialize(
+    webContainer.instance, handleFileCreated, handleFolderCreated,
+    ['node_modules', '.git', '.next', 'dist', 'build', '.vercel'],
+    { onFileDeleted: handleFileDeleted, onFolderDeleted: handleFolderDeleted, onFileRenamed: handleFileRenamed }
+  );
+
+  return () => fileCreationWatcher.stop();
+},[webContainer.instance, webContainer.isReady, templateData, isHost, session.sessionId, 
+    handleAddFile, handleAddFolder, handleDeleteFile, handleDeleteFolder, handleRenameFile, 
+    saveCollabWorkspace, emitFileAction])
 
 
 useEffect(() => {
