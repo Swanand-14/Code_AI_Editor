@@ -1,24 +1,29 @@
 "use client"
 import { useEffect, useState, useRef } from "react"
-import { X, GitCompare, ChevronDown, ChevronUp } from "lucide-react"
+import { X, GitCompare, ChevronDown, ChevronUp,Minus,Plus,Badge,Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { computeDiff, groupDiffBlocks, getDiffStats, DiffLine, DiffBlock } from "../lib/diff-utils"
+import { useGitWorkspace } from "../hooks/Usegitworkspace"
 
 
 interface DiffViewerProps{
     originalContent:string,
     modifiedContent:string,
     filepath:string,
-    onClose:()=>void
+    onClose:()=>void,
+    showStaging?:boolean
+
 }
 
-export function DiffViewer({originalContent,modifiedContent,filepath,onClose}:DiffViewerProps){
+export function DiffViewer({originalContent,modifiedContent,filepath,onClose,showStaging = true}:DiffViewerProps){
     const [diff,setDiff] = useState<DiffLine[]>([])
     const [block,setBlocks] = useState<DiffBlock[]>([])
     const [collapsedBlocks,setCollapsedBlocks] = useState<Set<number>>(new Set())
     const leftScrollRef = useRef<HTMLDivElement>(null)
     const rightScrollRef = useRef<HTMLAnchorElement>(null)
     const isScrolling = useRef(false)
+    const {stagedFiles,stageFile,unstageFile} = useGitWorkspace()
+    const isStaged = stagedFiles.has(filepath)
 
     useEffect(()=>{
         const computed = computeDiff(originalContent,modifiedContent)
@@ -50,7 +55,15 @@ export function DiffViewer({originalContent,modifiedContent,filepath,onClose}:Di
         <div className="flex items-center gap-3">
           <GitCompare className="h-5 w-5 text-muted-foreground" />
           <div>
+          <div>
             <h3 className="font-medium text-sm">{fileName}</h3>
+            {isStaged && (
+                <Badge variant="secondary" className="text-xs">
+                  <Check className="h-3 w-3 mr-1" />
+                  Staged
+                </Badge>
+              )}
+          </div>
             <p className="text-xs text-muted-foreground">{filepath}</p>
           </div>
         </div>
@@ -68,6 +81,30 @@ export function DiffViewer({originalContent,modifiedContent,filepath,onClose}:Di
               <span className="text-yellow-600">~{stats.modifications}</span>
             )}
           </div>
+
+          {showStaging && (
+            <div className="flex items-center gap-2">
+              {isStaged ? (
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => unstageFile(filepath)}
+                >
+                  <Minus className="h-4 w-4 mr-2" />
+                  Unstage
+                </Button>
+              ) : (
+                <Button 
+                  variant="default" 
+                  size="sm"
+                  onClick={() => stageFile(filepath)}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Stage File
+                </Button>
+              )}
+            </div>
+          )}
 
           <Button variant="ghost" size="icon" onClick={onClose}>
             <X className="h-4 w-4" />

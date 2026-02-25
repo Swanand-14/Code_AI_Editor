@@ -467,11 +467,137 @@ blobs.push({
   }
 }
 
-
-  
-
+async getBranch(owner: string, repo: string, branch: string) {
+  try {
+    const { data } = await this.octokit.repos.getBranch({
+      owner,
+      repo,
+      branch,
+    })
+    return data
+  } catch (error: any) {
+    throw new Error(`Failed to get branch: ${error.message}`)
+  }
 }
 
+/**
+ * Create a blob (file content)
+ */
+async createBlob(
+  owner: string,
+  repo: string,
+  content: string,
+  encoding: 'base64' | 'utf-8' = 'base64'
+) {
+  const response = await this.octokit.git.createBlob({
+    owner,
+    repo,
+    content,
+    encoding,
+  })
+  return response.data // { sha: "...", url: "..." }
+}
 
+/**
+ * Create a tree (directory structure)
+ */
+async createTree(
+  owner: string,
+  repo: string,
+  treeData: {
+    base_tree: string // ← must be tree SHA from commit.commit.tree.sha
+    tree: Array<{
+      path: string
+      mode: '100644' | '100755' | '040000' | '160000' | '120000'
+      type: 'blob' | 'tree' | 'commit'
+      sha: string | null // null = delete the file
+    }>
+  }
+) {
+  const response = await this.octokit.git.createTree({
+    owner,
+    repo,
+    base_tree: treeData.base_tree,
+    tree: treeData.tree as any,
+  })
+  return response.data // { sha: "...", tree: [...] }
+}
+
+/**
+ * Create a commit
+ */
+async createCommit(
+  owner: string,
+  repo: string,
+  commitData: {
+    message: string
+    tree: string   // tree SHA from createTree()
+    parents: string[] // [currentCommitSha]
+  }
+) {
+  const response = await this.octokit.git.createCommit({
+    owner,
+    repo,
+    message: commitData.message,
+    tree: commitData.tree,
+    parents: commitData.parents,
+  })
+  return response.data // { sha: "...", ... }
+}
+
+/**
+ * Update a reference (branch pointer)
+ */
+async updateRef(owner: string, repo: string, ref: string, sha: string) {
+  const response = await this.octokit.git.updateRef({
+    owner,
+    repo,
+    ref,
+    sha,
+    force: false,
+  })
+  return response.data
+}
+
+/**
+ * Get all entries from a tree (recursive)
+ */
+async getTreeEntries(owner: string, repo: string, treeSha: string, recursive: boolean = true) {
+  try {
+    const response = await this.octokit.git.getTree({
+      owner,
+      repo,
+      tree_sha: treeSha,
+      recursive: recursive ? 'true' : 'false',
+    } as any)
+    return response.data.tree || []
+  } catch (error: any) {
+    console.error(`Failed to get tree entries: ${error.message}`)
+    return []
+  }
+}
+
+/**
+ * Create a tree directly without base_tree (safer for complex operations)
+ */
+async createTreeDirect(
+  owner: string,
+  repo: string,
+  tree: Array<{
+    path: string
+    mode: '100644' | '100755' | '040000' | '160000' | '120000'
+    type: 'blob' | 'tree' | 'commit'
+    sha: string
+  }>
+) {
+  const response = await this.octokit.git.createTree({
+    owner,
+    repo,
+    tree: tree as any,
+  })
+  return response.data // { sha: "...", tree: [...] }
+}
+
+}
 
 

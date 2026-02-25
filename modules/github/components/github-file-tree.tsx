@@ -29,6 +29,9 @@ interface FileTreeProps {
   onDeleteFolder?: (folderPath: string, folderName: string) => void 
   expandedDirs?: Set<string> 
   onExpandedDirsChange?: (dirs: Set<string>) => void 
+  modifiedFiles?: Set<string>
+  createdFiles?: Set<string>
+  deletedFiles?: Set<string>
 }
 
 export function GitHubFileTree({ 
@@ -40,7 +43,10 @@ export function GitHubFileTree({
   onDeleteFile,
   onDeleteFolder ,
   expandedDirs: controlledExpandedDirs, 
-  onExpandedDirsChange 
+  onExpandedDirsChange ,
+  modifiedFiles,
+  createdFiles,
+  deletedFiles,
 }: FileTreeProps) {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([""]))
 
@@ -165,6 +171,15 @@ export function GitHubFileTree({
             >
               <File className="h-4 w-4 shrink-0 text-muted-foreground" />
               <span className="truncate">{file.name}</span>
+              {modifiedFiles?.has(file.path) && (
+        <span className="ml-auto text-xs text-orange-500">M</span>
+      )}
+      {createdFiles?.has(file.path) && (
+        <span className="ml-auto text-xs text-green-500">A</span>
+      )}
+      {deletedFiles?.has(file.path) && (
+        <span className="ml-auto text-xs text-red-500">D</span>
+      )}
             </div>
 
             {onDeleteFile && file.name !== ".gitkeep" && (

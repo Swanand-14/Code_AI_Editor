@@ -17,6 +17,7 @@ interface PlaygroundEditorProps {
     onRejectSuggestion:(editor:any)=>void
     onTriggerSuggestion:(type:string,editor:any)=>void
     serverUrl?: string | null
+    disableAI?: boolean 
 }
 
 // CHANGE 1: Component name capitalized (React convention)
@@ -31,7 +32,7 @@ const PlaygroundEditor = ({
   onAcceptSuggestion,
   onRejectSuggestion,
   onTriggerSuggestion,
-  serverUrl
+  serverUrl,disableAI
 }:PlaygroundEditorProps) =>{
 const editorRef = useRef<any>(null);
 const monacoRef = useRef<Monaco|null>(null);
@@ -494,17 +495,16 @@ const handleEditorDidMount = (editor:any,monaco:Monaco)=>{
       }
 
       // Trigger new suggestion if appropriate (simplified)
-      if (!currentSuggestionRef.current && !suggestionLoading) {
-        // Clear any existing timeout
-        if (suggestionTimeoutRef.current) {
-          clearTimeout(suggestionTimeoutRef.current)
-        }
-
-        // Trigger suggestion with a delay
-        suggestionTimeoutRef.current = setTimeout(() => {
-          onTriggerSuggestion("completion", editor)
-        }, 300)
+      if (!disableAI && !currentSuggestionRef.current && !suggestionLoading) {
+    if (suggestionTimeoutRef.current) {
+      clearTimeout(suggestionTimeoutRef.current)
+    }
+    suggestionTimeoutRef.current = setTimeout(() => {
+      if (onTriggerSuggestion) {
+        onTriggerSuggestion("completion", editor)
       }
+    }, 300)
+  }
     })
 
     // Listen for content changes to detect manual typing over suggestions
@@ -534,7 +534,7 @@ const handleEditorDidMount = (editor:any,monaco:Monaco)=>{
         const change = e.changes[0]
 
         // Trigger suggestions after specific characters
-        if (
+        if (!disableAI &&
           change.text === "\n" || // New line
           change.text === "{" || // Opening brace
           change.text === "." || // Dot notation
@@ -545,9 +545,9 @@ const handleEditorDidMount = (editor:any,monaco:Monaco)=>{
           change.text === ";" // Statement end
         ) {
           setTimeout(() => {
-            if (editorRef.current && !currentSuggestionRef.current && !suggestionLoading) {
-              onTriggerSuggestion("completion", editor)
-            }
+           if (editorRef.current && !currentSuggestionRef.current && !suggestionLoading && onTriggerSuggestion) {
+    onTriggerSuggestion("completion", editor)
+  }
           }, 100) // Small delay to let the change settle
         }
       }
