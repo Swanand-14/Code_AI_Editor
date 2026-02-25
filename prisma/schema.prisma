@@ -81,6 +81,7 @@ model User {
   hostedSessions CollabSession[] @relation("HostedSessions")
   collabParticipations CollabParticipant[] @relation("CollabParticipants")
   ownedWorkspaces CollabWorkspace[] @relation("OwnedWorkspaces")
+  workspaceDrafts WorkspaceDraft[] @relation("WorkspaceDrafts")
 
   
 
@@ -225,4 +226,22 @@ model CollabWorkspace {
   @@map("collab_workspaces")
   @@index([ownerId])
   
+}
+
+model WorkspaceDraft {
+id            String   @id @default(auto()) @map("_id") @db.ObjectId
+userId        String   @db.ObjectId
+repoFullName  String
+branch        String
+modifiedFiles Json
+createdFiles  Json
+deletedFiles  Json
+lastSaved     DateTime @default(now())
+expiresAt     DateTime
+// ✅ ADD THE RELATION NAME HERE
+user          User     @relation("WorkspaceDrafts", fields: [userId], references: [id], onDelete: Cascade)
+@@unique([userId, repoFullName, branch])
+@@index([expiresAt])
+@@index([userId])
+@@map("workspace_drafts")
 }
