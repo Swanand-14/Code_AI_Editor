@@ -83,6 +83,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
   const manuallyCreatedFilesRef = useRef<Set<string>>(new Set())
   const [showSourceControl, setShowSourceControl] = useState(false)
   const [diffFilePath, setDiffFilePath] = useState<string | null>(null)
+  const [draftRestoredAt, setDraftRestoredAt] = useState(0)
   
   const router = useRouter()
 
@@ -90,6 +91,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
   const {
     files,
     initializeWorkspace,
+    beginBranchSwitch,
     openFile: openFileInWorkspace,
     closeFile,
     closeAllFiles,
@@ -105,7 +107,8 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
     markFileCreated,
     markFileDeleted,
     unstageAllFiles,
-    unmarkFileCreated
+    unmarkFileCreated,
+    isSwitchingBranch
   } = useGitWorkspace()
 
   const activeFile = useActiveFile()
@@ -144,14 +147,7 @@ const remoteState = useGitWorkspace(state => state.remoteState)
     terminalRef,
     autoStart: false,
   })
-
-  useEffect(() => {
-    autoStartAttempted.current = false
-    setIsTerminalReady(false)
-    loadRepositoryTree()
-  }, [currentBranch])
-
-  async function loadRepositoryTree(retryCount = 0, maxTries = 3) {
+    async function loadRepositoryTree(retryCount = 0, maxTries = 3) {
     setIsLoadingTree(true)
     try {
       const result = await fetchRepositoryTree(owner, repo, currentBranch)
@@ -176,35 +172,11 @@ const remoteState = useGitWorkspace(state => state.remoteState)
         
         // ✅ Initialize workspace
         initializeWorkspace(repoFullName, currentBranch, filesWithContent)
-        await restoreDraft(repoFullName, currentBranch, webContainerInstance ?? null)
+        await restoreDraft(repoFullName, currentBranch,null)
+        setDraftRestoredAt(prev => prev + 1) 
         
-        // ✅ Mount files to WebContainer
-        if (webContainerInstance && isReady) {
-          console.log('🚀 [GITHUB] Mounting files to WebContainer...')
-          
-          for (const file of filesWithContent) {
-            if (file.type === 'file' && file.content) {
-              const filePath = file.path
-              
-              // Create parent directories
-              const pathParts = filePath.split('/')
-              if (pathParts.length > 1) {
-                const dirPath = pathParts.slice(0, -1).join('/')
-                try {
-                  await webContainerInstance.fs.mkdir(dirPath, { recursive: true })
-                } catch (err) {}
-              }
-              
-              // Write file
-              await webContainerInstance.fs.writeFile(`/${filePath}`, file.content, 'utf-8')
-            }
-          }
-          
-          console.log(`✅ [GITHUB] Mounted files to WebContainer`)
-          
-          // ✅ Restore draft
-          
-        }
+        
+        
       } else {
         if (retryCount < maxTries && result.error?.includes("404")) {
           toast.loading(`Repository initializing... Retry ${retryCount + 1}/${maxTries}`, {
@@ -222,6 +194,14 @@ const remoteState = useGitWorkspace(state => state.remoteState)
       setIsLoadingTree(false)
     }
   }
+
+  useEffect(() => {
+    autoStartAttempted.current = false
+    setIsTerminalReady(false)
+    loadRepositoryTree()
+  }, [currentBranch])
+
+
 
   useEffect(() => {
     const handleTerminalReady = () => {
@@ -336,10 +316,15 @@ const remoteState = useGitWorkspace(state => state.remoteState)
   }, [isWebContainerSupported, webContainerInstance, files, activeFile, updateFileInTree, updateFileContent, owner, repo, currentBranch])
 
   function handleBranchChange(branch: string) {
-    closeAllFiles()
-    setCurrentBranch(branch)
+    if(branch === currentBranch) return
+    beginBranchSwitch(branch)
     setExpandedDirs(new Set([""]))
     setShowPreview(false)
+    setShowDiff(false)
+    setDiffFilePath(null)
+    setCurrentBranch(branch)
+    
+    
     toast.success(`Switched to ${branch}`)
   }
 
@@ -609,6 +594,63 @@ const remoteState = useGitWorkspace(state => state.remoteState)
   setFolderToDelete(null)
 
   }
+  useEffect(() => {
+  if (!isReady || !webContainerInstance) return
+  if(draftRestoredAt === 0) return;
+
+  const state = useGitWorkspace.getState()
+  const { modifiedFiles, createdFiles, openFiles, deletedFiles } = state
+
+  // No draft changes to apply
+  if (modifiedFiles.size === 0 && createdFiles.size === 0 && deletedFiles.size === 0) return
+
+  console.log('🔄 [GITHUB] Applying draft state to WC filesystem...')
+
+  async function applyDraftToWC() {
+    // Write modified files — overwrite GitHub content with draft content
+    for (const path of modifiedFiles) {
+      const openFile = openFiles.find(f => f.path === path)
+      if (openFile?.content) {
+        try {
+          await webContainerInstance.fs.writeFile(`/${path}`, openFile.content, 'utf-8')
+          console.log(`✅ [GITHUB] Applied modified draft: ${path}`)
+        } catch (e) {
+          console.warn(`⚠️ [GITHUB] Failed to apply modified draft: ${path}`, e)
+        }
+      }
+    }
+
+    // Write created files — these don't exist in GitHub mount
+    for (const path of createdFiles) {
+      const openFile = openFiles.find(f => f.path === path)
+      const content = openFile?.content ?? ''
+      try {
+        // Ensure parent dir exists
+        const dir = path.split('/').slice(0, -1).join('/')
+        if (dir) await webContainerInstance.fs.mkdir(`/${dir}`, { recursive: true })
+        await webContainerInstance.fs.writeFile(`/${path}`, content, 'utf-8')
+        console.log(`✅ [GITHUB] Applied created draft: ${path}`)
+      } catch (e) {
+        console.warn(`⚠️ [GITHUB] Failed to apply created draft: ${path}`, e)
+      }
+    }
+
+    // Delete staged-for-deletion files — cleanupStaleFiles won't catch these
+    // because they ARE in the GitHub tree (have sha), just staged for deletion
+    for (const path of deletedFiles) {
+      try {
+        await webContainerInstance.fs.rm(`/${path}`)
+        console.log(`✅ [GITHUB] Applied deleted draft: ${path}`)
+      } catch (e) {
+        // File may already not exist, ignore
+      }
+    }
+
+    console.log('✅ [GITHUB] Draft state applied to WC filesystem')
+  }
+
+  applyDraftToWC()
+}, [isReady, webContainerInstance,draftRestoredAt])
 
   // ✅ Keyboard shortcut - using activeFile
   useEffect(() => {
@@ -636,6 +678,7 @@ const handleFileCreated = async (filePath: string, parentPath: string) => {
         console.log(`⏭️ Ignoring manually created: ${filePath}`)
         return
       }
+      if(useGitWorkspace.getState().isSwitchingBranch)return;
       
       console.log(`📄 [GITHUB] File created: ${filePath}`)
       
@@ -672,6 +715,7 @@ const handleFileCreated = async (filePath: string, parentPath: string) => {
         console.log(`⏭️ Ignoring manually created: ${folderPath}`)
         return
       }
+      if(useGitWorkspace.getState().isSwitchingBranch)return;
       
       console.log(`📁 [GITHUB] Folder created: ${folderPath}`)
       
@@ -702,6 +746,7 @@ const handleFileCreated = async (filePath: string, parentPath: string) => {
     
     const handleFileDeleted = async (filePath: string, parentPath: string) => {
       if (manuallyCreatedFilesRef.current.has(filePath)) return
+      if(useGitWorkspace.getState().isSwitchingBranch)return;
       
       console.log(`🗑️ [GITHUB] File deleted: ${filePath}`)
       
@@ -723,6 +768,7 @@ const handleFileCreated = async (filePath: string, parentPath: string) => {
     
     const handleFolderDeleted = async (folderPath: string, parentPath: string) => {
       if (manuallyCreatedFilesRef.current.has(folderPath)) return
+      if(useGitWorkspace.getState().isSwitchingBranch)return;
       
       console.log(`🗑️ [GITHUB] Folder deleted: ${folderPath}`)
       

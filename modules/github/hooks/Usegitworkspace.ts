@@ -24,13 +24,37 @@ interface FileChange {
   content?: string;
   oldSha?: string;
 }
+interface BranchWorkspace {
+  files: GitHubFile[];
+  remoteState: Map<string, string>;
+  openFiles: OpenFile[];
+  activeFilePath: string | null;
+  modifiedFiles: Set<string>;
+  createdFiles: Set<string>;
+  deletedFiles: Set<string>;
+  stagedFiles: Set<string>;
+}
 
+function emptyBranchWorkspace(): BranchWorkspace {
+  return {
+    files: [],
+    remoteState: new Map(),
+    openFiles: [],
+    activeFilePath: null,
+    modifiedFiles: new Set(),
+    createdFiles: new Set(),
+    deletedFiles: new Set(),
+    stagedFiles: new Set(),
+  };
+}
 interface GitWorkspaceState {
   // ===== Repository State =====
   repoFullName: string;
   owner: string;
   repo: string;
   currentBranch: string;
+  isSwitchingBranch: boolean; 
+  branchWorkspaces: Map<string, BranchWorkspace>; // branch name -> workspace state
   
   // ===== File System State =====
   files: GitHubFile[]; // All files from GitHub
@@ -46,6 +70,8 @@ interface GitWorkspaceState {
   deletedFiles: Set<string>;  // Deleted files
 
   stagedFiles: Set<string>; // For future staging/committing features
+
+  beginBranchSwitch: (newBranch: string) => void;
   unmarkFileCreated: (path: string) => void;
   
 
@@ -104,24 +130,70 @@ interface GitWorkspaceState {
   reset: () => void;
 }
 
+/** Sync the flat convenience fields from a BranchWorkspace into state. */
+function flattenWorkspace(ws: BranchWorkspace): Pick<
+  GitWorkspaceState,
+  'files' | 'remoteState' | 'openFiles' | 'activeFilePath' |
+  'modifiedFiles' | 'createdFiles' | 'deletedFiles' | 'stagedFiles'
+> {
+  return {
+    files: ws.files,
+    remoteState: ws.remoteState,
+    openFiles: ws.openFiles,
+    activeFilePath: ws.activeFilePath,
+    modifiedFiles: ws.modifiedFiles,
+    createdFiles: ws.createdFiles,
+    deletedFiles: ws.deletedFiles,
+    stagedFiles: ws.stagedFiles,
+  };
+}
+function updateActiveBranch(
+  state: GitWorkspaceState,
+  updater: (ws: BranchWorkspace) => BranchWorkspace
+): Partial<GitWorkspaceState> {
+  const branch = state.currentBranch;
+  const current = state.branchWorkspaces.get(branch) ?? emptyBranchWorkspace();
+  const updated = updater(current);
+  const newMap = new Map(state.branchWorkspaces);
+  newMap.set(branch, updated);
+  return { branchWorkspaces: newMap, ...flattenWorkspace(updated) };
+}
+
+const INITIAL_FLAT = flattenWorkspace(emptyBranchWorkspace());
+
 const initialState = {
   repoFullName: '',
   owner: '',
   repo: '',
   currentBranch: 'main',
-  files: [],
-  remoteState: new Map(),
-  openFiles: [],
-  activeFilePath: null,
-  modifiedFiles: new Set<string>(),
-  createdFiles: new Set<string>(),
-  deletedFiles: new Set<string>(),
-  stagedFiles: new Set<string>(),
+  isSwitchingBranch: false,
+  branchWorkspaces: new Map<string,BranchWorkspace>(),
+  ...INITIAL_FLAT,
 };
 
 
 export const useGitWorkspace = create<GitWorkspaceState>((set, get) => ({
   ...initialState,
+
+  beginBranchSwitch: (newBranch) => {
+    set((state) => {
+      // Ensure target branch has at least an empty workspace so nothing
+      // tries to read undefined during the loading window.
+      const newMap = new Map(state.branchWorkspaces);
+      if (!newMap.has(newBranch)) {
+        newMap.set(newBranch, emptyBranchWorkspace());
+      }
+      const ws = newMap.get(newBranch)!;
+      return {
+        isSwitchingBranch: true,
+        currentBranch: newBranch,
+        branchWorkspaces: newMap,
+        ...flattenWorkspace(ws),
+      };
+    });
+    console.log(`🔀 [GitWorkspace] Branch switch started → ${newBranch}`);
+  },
+
   
   // ===== Initialize Workspace =====
   initializeWorkspace: (repoFullName, branch, files) => {
@@ -134,15 +206,8 @@ export const useGitWorkspace = create<GitWorkspaceState>((set, get) => ({
         remoteState.set(file.path, file.content);
       }
     });
-    
-    console.log(`📦 [GitWorkspace] Initialized: ${repoFullName} (${branch})`);
-    console.log(`📄 [GitWorkspace] Loaded ${remoteState.size} files into remote state`);
-    
-    set({
-      repoFullName,
-      owner,
-      repo,
-      currentBranch: branch,
+
+    const ws: BranchWorkspace = {
       files,
       remoteState,
       openFiles: [],
@@ -151,254 +216,257 @@ export const useGitWorkspace = create<GitWorkspaceState>((set, get) => ({
       createdFiles: new Set(),
       deletedFiles: new Set(),
       stagedFiles: new Set(),
-    });
+    };
+
+    
+    console.log(`📦 [GitWorkspace] Initialized: ${repoFullName} (${branch})`);
+    console.log(`📄 [GitWorkspace] Loaded ${remoteState.size} files into remote state`);
+    
+    set((state)=>{
+      const newMap = new Map(state.branchWorkspaces);
+      newMap.set(branch,ws);
+      return {
+        repoFullName,
+        owner,
+        repo,
+        currentBranch:branch,
+        isSwitchingBranch: false,
+        branchWorkspaces: newMap,
+        ...flattenWorkspace(ws),
+      }
+
+    })
+    console.log(`📦 [GitWorkspace] Initialized branch "${branch}" – ${remoteState.size} files`);
   },
   
   // ===== Open File =====
   openFile: (file) => {
-    const { openFiles, remoteState } = get();
-    
-    // Check if already open
-    const existing = openFiles.find(f => f.path === file.path);
-    if (existing) {
-      set({ activeFilePath: file.path });
-      return;
-    }
-    
-    // Get original content from remoteState
-    const originalContent = remoteState.get(file.path) || file.content || '';
-    
-    const newOpenFile: OpenFile = {
-      path: file.path,
-      content: originalContent,
-      originalContent,
-      sha: file.sha,
-      hasChanges: false,
-    };
-    
-    set({
-      openFiles: [...openFiles, newOpenFile],
-      activeFilePath: file.path,
-    });
-    
-    console.log(`📂 [GitWorkspace] Opened: ${file.path}`);
+     if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => {
+      const existing = ws.openFiles.find((f) => f.path === file.path);
+      if (existing) {
+        return { ...ws, activeFilePath: file.path };
+      }
+      const originalContent = ws.remoteState.get(file.path) ?? file.content ?? '';
+      const newOpenFile: OpenFile = {
+        path: file.path,
+        content: originalContent,
+        originalContent,
+        sha: file.sha,
+        hasChanges: false,
+      };
+      return {
+        ...ws,
+        openFiles: [...ws.openFiles, newOpenFile],
+        activeFilePath: file.path,
+      };
+    }));
   },
   
   // ===== Close File =====
   closeFile: (path) => {
-    const { openFiles, activeFilePath } = get();
-    const newOpenFiles = openFiles.filter(f => f.path !== path);
-    
-    let newActivePath = activeFilePath;
-    
-    // If closing active file, switch to last file or null
-    if (activeFilePath === path) {
-      if (newOpenFiles.length > 0) {
-        newActivePath = newOpenFiles[newOpenFiles.length - 1].path;
-      } else {
-        newActivePath = null;
+    set((state) => updateActiveBranch(state,(ws)=>{
+      const newOpenFiles = ws.openFiles.filter((f)=>f.path !== path);
+      let newActive = ws.activeFilePath;
+      if(ws.activeFilePath === path){
+        newActive = newOpenFiles.length > 0 ? newOpenFiles[newOpenFiles.length - 1].path : null;
       }
-    }
-    
-    set({
-      openFiles: newOpenFiles,
-      activeFilePath: newActivePath,
-    });
-    
-    console.log(`🗑️ [GitWorkspace] Closed: ${path}`);
+      return {
+        ...ws,
+        openFiles: newOpenFiles,
+        activeFilePath: newActive,
+      }
+    }))
   },
   
   // ===== Close All Files =====
   closeAllFiles: () => {
-    set({
-      openFiles: [],
-      activeFilePath: null,
-    });
-    console.log(`🗑️ [GitWorkspace] Closed all files`);
+    set((state)=>updateActiveBranch(state,(ws)=>(
+      {
+        ...ws,
+        openFiles: [],
+        activeFilePath: null,
+      }
+    )))
   },
   
   // ===== Update File Content (from Monaco editor) =====
   updateFileContent: (path, newContent) => {
-    const { openFiles, remoteState } = get();
-    
-    const originalContent = remoteState.get(path) || '';
-    const hasChanges = newContent !== originalContent;
-    
-    // Update open file
-    const updatedOpenFiles = openFiles.map(file =>
-      file.path === path
-        ? { ...file, content: newContent, hasChanges }
-        : file
-    );
-    
-    set({ openFiles: updatedOpenFiles });
-    
-    // Auto-mark as modified if content changed
-    if (hasChanges) {
-      get().markFileModified(path);
-    } else {
-      get().unmarkFileModified(path);
-    }
+    if (get().isSwitchingBranch) return;
+    set((state) => {
+      const branch = state.currentBranch;
+      const ws = state.branchWorkspaces.get(branch) ?? emptyBranchWorkspace();
+      const originalContent = ws.remoteState.get(path) ?? '';
+      const hasChanges = newContent !== originalContent;
+
+      const updatedOpenFiles = ws.openFiles.map((f) =>
+        f.path === path ? { ...f, content: newContent, hasChanges } : f
+      );
+
+      const newModified = new Set(ws.modifiedFiles);
+      if (hasChanges) {
+        newModified.add(path);
+      } else {
+        newModified.delete(path);
+      }
+
+      const updated: BranchWorkspace = {
+        ...ws,
+        openFiles: updatedOpenFiles,
+        modifiedFiles: newModified,
+      };
+      const newMap = new Map(state.branchWorkspaces);
+      newMap.set(branch, updated);
+      return { branchWorkspaces: newMap, ...flattenWorkspace(updated) };
+    });
   },
   
   // ===== Mark File Modified =====
   markFileModified: (path,restoredContent) => {
-     set(state => {
-    const newModified = new Set([...state.modifiedFiles, path]);
-    
-    // If restoring draft content, update openFiles too
-    if (restoredContent !== undefined) {
-      const existingOpen = state.openFiles.find(f => f.path === path);
-      
+    if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => {
+      const newModified = new Set([...ws.modifiedFiles, path]);
+      if (restoredContent === undefined) {
+        return { ...ws, modifiedFiles: newModified };
+      }
+      const existingOpen = ws.openFiles.find((f) => f.path === path);
       if (existingOpen) {
-        // File is open — update its content
         return {
+          ...ws,
           modifiedFiles: newModified,
-          openFiles: state.openFiles.map(f =>
-            f.path === path
-              ? { ...f, content: restoredContent, hasChanges: true }
-              : f
-          )
-        };
-      } else {
-        // File not open — store content in remoteState won't work,
-        // so we add it to openFiles so it's available when user opens it
-        const originalContent = state.remoteState.get(path) || '';
-        return {
-          modifiedFiles: newModified,
-          openFiles: [
-            ...state.openFiles,
-            {
-              path,
-              content: restoredContent,
-              originalContent,
-              sha: state.files.find(f => f.path === path)?.sha || '',
-              hasChanges: true,
-            }
-          ]
+          openFiles: ws.openFiles.map((f) =>
+            f.path === path ? { ...f, content: restoredContent, hasChanges: true } : f
+          ),
         };
       }
-    }
-    
-    return { modifiedFiles: newModified };
-  });
+      // File not open – add it so draft content is available on open
+      const originalContent = ws.remoteState.get(path) ?? '';
+      return {
+        ...ws,
+        modifiedFiles: newModified,
+        openFiles: [
+          ...ws.openFiles,
+          {
+            path,
+            content: restoredContent,
+            originalContent,
+            sha: ws.files.find((f) => f.path === path)?.sha ?? '',
+            hasChanges: true,
+          },
+        ],
+      };
+    }));
   },
   
   // ===== Mark File Created =====
   markFileCreated: (path,restoredContent) => {
-      set(state => {
-    const newCreated = new Set([...state.createdFiles, path]);
-    
-    if (restoredContent !== undefined) {
-      const existingOpen = state.openFiles.find(f => f.path === path);
-      
+    if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => {
+      const newCreated = new Set([...ws.createdFiles, path]);
+      if (restoredContent === undefined) {
+        return { ...ws, createdFiles: newCreated };
+      }
+      const existingOpen = ws.openFiles.find((f) => f.path === path);
       if (!existingOpen) {
         return {
+          ...ws,
           createdFiles: newCreated,
           openFiles: [
-            ...state.openFiles,
-            {
-              path,
-              content: restoredContent,
-              originalContent: '',  // created files have no original
-              sha: '',
-              hasChanges: true,
-            }
-          ]
+            ...ws.openFiles,
+            { path, content: restoredContent, originalContent: '', sha: '', hasChanges: true },
+          ],
         };
       }
       return {
+        ...ws,
         createdFiles: newCreated,
-        openFiles: state.openFiles.map(f =>
-          f.path === path
-            ? { ...f, content: restoredContent, hasChanges: true }
-            : f
-        )
+        openFiles: ws.openFiles.map((f) =>
+          f.path === path ? { ...f, content: restoredContent, hasChanges: true } : f
+        ),
       };
-    }
-    
-    return { createdFiles: newCreated };
-  });
+    }));
   },
   
   // ===== Mark File Deleted =====
   markFileDeleted: (path) => {
-    set(state => {
-    const isLocalOnly = state.createdFiles.has(path)
-    
-    if (isLocalOnly) {
-      // Was never on GitHub — just remove from created, don't add to deleted
-      const newCreated = new Set(state.createdFiles)
-      newCreated.delete(path)
-      return { 
-        createdFiles: newCreated,
-        modifiedFiles: new Set([...state.modifiedFiles].filter(p => p !== path))
+   if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => {
+      if (ws.createdFiles.has(path)) {
+        // Local-only file – just untrack
+        const newCreated = new Set(ws.createdFiles);
+        newCreated.delete(path);
+        const newModified = new Set(ws.modifiedFiles);
+        newModified.delete(path);
+        return { ...ws, createdFiles: newCreated, modifiedFiles: newModified };
       }
-    }
-    
-    // Real GitHub file — stage for deletion
-    return {
-      deletedFiles: new Set([...state.deletedFiles, path]),
-      modifiedFiles: new Set([...state.modifiedFiles].filter(p => p !== path))
-    }
-  });
-  console.log(`🗑️ [GitWorkspace] Marked deleted: ${path}`);
+      return {
+        ...ws,
+        deletedFiles: new Set([...ws.deletedFiles, path]),
+        modifiedFiles: new Set([...ws.modifiedFiles].filter((p) => p !== path)),
+      };
+    }));
   },
   
   // ===== Unmark File Modified =====
   unmarkFileModified: (path) => {
-    set(state => {
-      const newModified = new Set(state.modifiedFiles);
+     if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => {
+      const newModified = new Set(ws.modifiedFiles);
       newModified.delete(path);
-      return { modifiedFiles: newModified };
-    });
-    console.log(`↩️ [GitWorkspace] Unmarked modified: ${path}`);
+      return { ...ws, modifiedFiles: newModified };
+    }));
   },
 
-  stageFile: (path) => {
-    set(state => ({
-      stagedFiles: new Set([...state.stagedFiles, path])
+  unmarkFileCreated: (path) => {
+    if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => {
+      const newCreated = new Set(ws.createdFiles);
+      newCreated.delete(path);
+      return { ...ws, createdFiles: newCreated };
     }));
-    console.log(`➕ [GitWorkspace] Staged: ${path}`);
+  },
+
+
+ stageFile: (path) => {
+    if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => ({
+      ...ws,
+      stagedFiles: new Set([...ws.stagedFiles, path]),
+    })));
     toast.success(`Staged ${path.split('/').pop()}`);
   },
+
   
   unstageFile: (path) => {
-    set(state => {
-      const newStaged = new Set(state.stagedFiles);
-      newStaged.delete(path);
-      return { stagedFiles: newStaged };
-    });
-    console.log(`➖ [GitWorkspace] Unstaged: ${path}`);
+    if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => {
+      const s = new Set(ws.stagedFiles);
+      s.delete(path);
+      return { ...ws, stagedFiles: s };
+    }));
     toast.success(`Unstaged ${path.split('/').pop()}`);
   },
   
   stageAllFiles: () => {
-    const { modifiedFiles, createdFiles, deletedFiles } = get();
-    const allChangedFiles = new Set([
-      ...modifiedFiles,
-      ...createdFiles,
-      ...deletedFiles
-    ]);
-    
-    set({ stagedFiles: allChangedFiles });
-    console.log(`➕ [GitWorkspace] Staged all ${allChangedFiles.size} files`);
-    toast.success(`Staged ${allChangedFiles.size} files`);
+    if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => ({
+      ...ws,
+      stagedFiles: new Set([
+        ...ws.modifiedFiles,
+        ...ws.createdFiles,
+        ...ws.deletedFiles,
+      ]),
+    })));
   },
   
   unstageAllFiles: () => {
-    set({ stagedFiles: new Set() });
-    console.log(`➖ [GitWorkspace] Unstaged all files`);
-    toast.success(`Unstaged all files`);
+    if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => ({
+      ...ws,
+      stagedFiles: new Set(),
+    })));
   },
-  unmarkFileCreated: (path) => {
-  set(state => {
-    const newCreated = new Set(state.createdFiles);
-    newCreated.delete(path);
-    return { createdFiles: newCreated };
-  });
-  console.log(`↩️ [GitWorkspace] Unmarked created: ${path}`);
-},
+  
   
   isFileStaged: (path) => {
     return get().stagedFiles.has(path);
@@ -453,53 +521,46 @@ export const useGitWorkspace = create<GitWorkspaceState>((set, get) => ({
   },
   // ===== Discard File Changes =====
   discardFileChanges: (path) => {
-    const { openFiles, remoteState } = get();
-    
-    const originalContent = remoteState.get(path);
-    if (!originalContent) {
-      toast.error('Cannot restore: original content not found');
-      return;
-    }
-    
-    // Restore original content in open file
-    const updatedOpenFiles = openFiles.map(file =>
-      file.path === path
-        ? { ...file, content: originalContent, hasChanges: false }
-        : file
-    );
-    
-    set({ openFiles: updatedOpenFiles });
-    
-    // Remove from modified set
-    get().unmarkFileModified(path);
-    
+    if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => {
+      const originalContent = ws.remoteState.get(path);
+      if (!originalContent) {
+        toast.error('Cannot restore: original content not found');
+        return ws;
+      }
+      const newModified = new Set(ws.modifiedFiles);
+      newModified.delete(path);
+      return {
+        ...ws,
+        modifiedFiles: newModified,
+        openFiles: ws.openFiles.map((f) =>
+          f.path === path
+            ? { ...f, content: originalContent, hasChanges: false }
+            : f
+        ),
+      };
+    }));
     toast.success(`Discarded changes to ${path.split('/').pop()}`);
-    console.log(`↩️ [GitWorkspace] Discarded changes: ${path}`);
   },
   
   // ===== Discard All Changes =====
   discardAllChanges: () => {
-    const { modifiedFiles, openFiles, remoteState } = get();
-    
-    // Restore all modified files
-    const updatedOpenFiles = openFiles.map(file => {
-      if (modifiedFiles.has(file.path)) {
-        const originalContent = remoteState.get(file.path) || file.originalContent;
-        return { ...file, content: originalContent, hasChanges: false };
-      }
-      return file;
-    });
-    
-    set({
-      openFiles: updatedOpenFiles,
+    if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => ({
+      ...ws,
+      openFiles: ws.openFiles.map((f) => {
+        if (ws.modifiedFiles.has(f.path)) {
+          const orig = ws.remoteState.get(f.path) ?? f.originalContent;
+          return { ...f, content: orig, hasChanges: false };
+        }
+        return f;
+      }),
       modifiedFiles: new Set(),
       createdFiles: new Set(),
       deletedFiles: new Set(),
       stagedFiles: new Set(),
-    });
-    
+    })));
     toast.success('All changes discarded');
-    console.log(`↩️ [GitWorkspace] Discarded all changes`);
   },
   
   // ===== Sync File to WebContainer =====
@@ -523,34 +584,34 @@ export const useGitWorkspace = create<GitWorkspaceState>((set, get) => ({
   
   // ===== Add File to Tree =====
   addFileToTree: (file) => {
-    set(state => ({
-      files: [...state.files, file]
-    }));
-    console.log(`➕ [GitWorkspace] Added to tree: ${file.path}`);
+     if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => ({
+      ...ws,
+      files: [...ws.files, file],
+    })));
   },
   
   // ===== Remove File from Tree =====
   removeFileFromTree: (path) => {
-    set(state => ({
-      files: state.files.filter(f => f.path !== path)
-    }));
-    console.log(`➖ [GitWorkspace] Removed from tree: ${path}`);
+    if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => ({
+      ...ws,
+      files: ws.files.filter((f) => f.path !== path),
+    })));
   },
   
   // ===== Update File in Tree =====
   updateFileInTree: (path, updates) => {
-    set(state => ({
-      files: state.files.map(f =>
-        f.path === path ? { ...f, ...updates } : f
-      )
-    }));
-    console.log(`🔄 [GitWorkspace] Updated in tree: ${path}`);
+     if (get().isSwitchingBranch) return;
+    set((state) => updateActiveBranch(state, (ws) => ({
+      ...ws,
+      files: ws.files.map((f) => (f.path === path ? { ...f, ...updates } : f)),
+    })));
   },
   
   // ===== Reset =====
   reset: () => {
-    set(initialState);
-    console.log(`🔄 [GitWorkspace] Reset`);
+    set({ ...initialState, branchWorkspaces: new Map() });
   },
 }));
 
@@ -592,3 +653,6 @@ export const useStagedCount = () => {
 export const useHasStagedChanges = () => {
   return useGitWorkspace(state => state.hasStagedChanges());
 };
+
+export const useIsSwitchingBranch = () =>
+  useGitWorkspace((s) => s.isSwitchingBranch);

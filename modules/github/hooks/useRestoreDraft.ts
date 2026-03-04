@@ -12,6 +12,8 @@ export function useRestoreDraft() {
   const markFileModified = useGitWorkspace(state => state.markFileModified);
   const markFileCreated = useGitWorkspace(state => state.markFileCreated);
   const markFileDeleted = useGitWorkspace(state => state.markFileDeleted);
+  const addFileToTree = useGitWorkspace(state => state.addFileToTree);
+  const removeFileFromTree = useGitWorkspace(state => state.removeFileFromTree);
   
   const [isRestoring, setIsRestoring] = useState(false);
   
@@ -34,6 +36,11 @@ export function useRestoreDraft() {
       }
       
       const draft = result.data;
+      if(draft.branch !== branch) {
+        console.warn(`⚠️ [Draft] Draft branch (${draft.branch}) does not match current branch (${branch})`);
+        setIsRestoring(false);
+        return false;
+      }
       const totalChanges = 
         draft.modifiedFiles.length + 
         draft.createdFiles.length + 
@@ -57,12 +64,22 @@ export function useRestoreDraft() {
       // Restore created files to WebContainer
       for (const file of draft.createdFiles) {
         // await syncFileToWebContainer(file.path, file.content, webContainerInstance);
+        addFileToTree({
+          name:file.path.split('/').pop() || file.path,
+          path:file.path,
+          sha:'', // No SHA for new files
+          type:'file',
+          content:file.content,
+          size:file.content.length,
+        });
         markFileCreated(file.path,file.content);
       }
       
       // Mark deleted files (don't delete from WebContainer yet)
       for (const path of draft.deletedFiles) {
+        removeFileFromTree(path);
         markFileDeleted(path);
+
       }
       
       console.log(`✅ [Draft] Restored ${totalChanges} changes`);
