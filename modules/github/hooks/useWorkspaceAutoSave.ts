@@ -18,14 +18,20 @@ export function useWorkspaceAutosave({
 }: AutosaveOptions) {
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastSaveRef = useRef<string>(''); // Hash of last saved state
+  const lastSaveBranchRef = useRef<string>('');
   
   const getAllChanges = useGitWorkspace(state => state.getAllChanges);
   const hasUnsavedChanges = useGitWorkspace(state => state.hasUnsavedChanges);
-  const openFiles = useGitWorkspace(state => state.openFiles);
+ 
   
   useEffect(() => {
     if (!enabled || !repoFullName || !currentBranch) {
       return;
+    }
+    if(lastSaveBranchRef.current !== currentBranch) {
+      lastSaveBranchRef.current = currentBranch;
+      lastSaveRef.current = '';
+
     }
     
     console.log(`🔄 [Autosave] Started for ${repoFullName} (${currentBranch})`);
@@ -37,6 +43,14 @@ export function useWorkspaceAutosave({
     
     // Autosave function
     const autosave = async () => {
+      if(useGitWorkspace.getState().isSwitchingBranch) {
+        console.log(`⏭️ [Autosave] Skipping autosave during branch switch`);
+        return; // Don't save while switching branches
+      }
+      if(useGitWorkspace.getState().currentBranch !== currentBranch) {
+        console.log(`⏭️ [Autosave] Skipping autosave due to branch mismatch (current: ${useGitWorkspace.getState().currentBranch}, expected: ${currentBranch})`);
+        return; // Don't save if branch changed outside of this hook
+      }
       if (!hasUnsavedChanges()) {
         return; // No changes to save
       }

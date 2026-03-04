@@ -62,6 +62,7 @@ export const useWebContainerForGithub = ({
   const hasInitialized = useRef(false);
   const currentProjectRef = useRef<string | null>(null);
   const CACHE_KEY_PREFIX = "wc-gh-deps-";
+  const initializedProjects = useRef<Set<string>>(new Set());
 
   const writeToTerminal = useCallback(
     (data: string) => {
@@ -190,6 +191,73 @@ export const useWebContainerForGithub = ({
     return result;
   }, []);
 
+  // Add this helper inside the hook, before setupProject
+const cleanupStaleFiles = useCallback(async (
+  instance: any,
+  currentFiles: GitHubFile[]
+) => {
+  const SKIP_DIRS = new Set(['node_modules', '.git', '.next', 'tmp', '.webcontainer'])
+  
+  // Build a set of all paths that SHOULD exist
+  const expectedPaths = new Set(currentFiles.map(f => f.path))
+  
+  // Recursively scan the filesystem
+  async function scanDir(dirPath: string): Promise<void> {
+    let entries: string[]
+    try {
+      entries = await instance.fs.readdir(dirPath)
+    } catch {
+      return
+    }
+    
+    for (const entry of entries) {
+      const fullPath = dirPath === '/' 
+        ? `/${entry}` 
+        : `${dirPath}/${entry}`
+      const relativePath = fullPath.replace(/^\//, '')
+      
+      // Skip protected directories
+      if (SKIP_DIRS.has(relativePath) || SKIP_DIRS.has(entry)) continue
+      
+      // Check if it's a directory by trying to readdir
+      let isDir = false
+      try {
+        await instance.fs.readdir(fullPath)
+        isDir = true
+      } catch {
+        isDir = false
+      }
+      
+      if (isDir) {
+        // Check if any expected file lives under this directory
+        const hasExpectedChild = [...expectedPaths].some(p => 
+          p.startsWith(relativePath + '/')
+        )
+        if (!hasExpectedChild) {
+          // Entire directory is stale
+          try {
+            await instance.fs.rm(fullPath, { recursive: true })
+            console.log(`🗑️ [WC] Removed stale dir: ${fullPath}`)
+          } catch (e) {}
+        } else {
+          // Recurse into it
+          await scanDir(fullPath)
+        }
+      } else {
+        // It's a file — remove if not in expected set
+        if (!expectedPaths.has(relativePath)) {
+          try {
+            await instance.fs.rm(fullPath)
+            console.log(`🗑️ [WC] Removed stale file: ${fullPath}`)
+          } catch (e) {}
+        }
+      }
+    }
+  }
+  
+  await scanDir('/')
+}, [])
+
   // Check if dependencies need installation
   const needsDependencyInstall = useCallback(
     async (projectId: string, packageJsonContent: string): Promise<boolean> => {
@@ -284,27 +352,25 @@ export const useWebContainerForGithub = ({
       const projectId = `${repoFullName}:${currentBranch}`;
 
       // Check if we're switching projects
-      if (currentProjectRef.current !== projectId) {
-        console.log(
-          `🔄 Project/branch switch: ${currentProjectRef.current} → ${projectId}`
-        );
+    if (currentProjectRef.current !== projectId) {
+  console.log(`🔄 Project/branch switch: ${currentProjectRef.current} → ${projectId}`)
+  
+  setIsLoading(true)
+  setServerUrl(null)
+  setIsServerRunning(false)
+  setError(null)
 
-        setIsLoading(true);
-        setServerUrl(null);
-        setIsServerRunning(false);
-        setError(null);
+  await webContainerService.setCurrentProject(projectId)
+  currentProjectRef.current = projectId
+  
+  // ✅ Always re-initialize on branch switch — never skip
+  initializedProjects.current.delete(projectId)
+}
 
-        await webContainerService.setCurrentProject(projectId);
-
-        hasInitialized.current = false;
-        currentProjectRef.current = projectId;
-      }
-
-      // Skip if already initialized
-      if (hasInitialized.current && currentProjectRef.current === projectId) {
-        console.log("✅ Project already initialized");
-        return;
-      }
+if (initializedProjects.current.has(projectId)) {
+  console.log("✅ Project already initialized")
+  return
+}
 
       try {
         writeToTerminal(`\r\n📁 Analyzing repository: ${repoFullName}\r\n`);
@@ -330,12 +396,17 @@ export const useWebContainerForGithub = ({
         );
         writeToTerminal("📦 Mounting files...\r\n");
 
-        hasInitialized.current = true;
+        initializedProjects.current.add(projectId);
 
         // Mount files
-        const wcFiles = convertToWebContainerFormat(files);
-        await instance.mount(wcFiles);
-        writeToTerminal("✅ Files mounted\r\n");
+        writeToTerminal("🧹 Syncing filesystem to branch...\r\n")
+        await cleanupStaleFiles(instance, files)
+        writeToTerminal("✅ Filesystem synced\r\n")
+
+// ✅ 2. Then mount new branch files onto clean disk
+        const wcFiles = convertToWebContainerFormat(files)
+        await instance.mount(wcFiles)
+        writeToTerminal("✅ Files mounted\r\n")
 
         // Modify package.json for Next.js webpack configuration
         if (

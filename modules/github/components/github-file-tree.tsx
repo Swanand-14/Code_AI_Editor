@@ -48,7 +48,27 @@ export function GitHubFileTree({
   createdFiles,
   deletedFiles,
 }: FileTreeProps) {
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([""]))
+  const [internalExpandedDirs, setInternalExpandedDirs] = useState<Set<string>>(new Set([""]))
+
+  
+  const expandedDirs = controlledExpandedDirs ?? internalExpandedDirs
+  function toggleDir(path: string) {
+    const next = new Set(expandedDirs)
+    if (next.has(path)) {
+      next.delete(path)
+    } else {
+      next.add(path)
+    }
+
+    if (onExpandedDirsChange) {
+      // Controlled mode — notify parent
+      onExpandedDirsChange(next)
+    } else {
+      // Uncontrolled mode
+      setInternalExpandedDirs(next)
+    }
+  }
+
 
   // Build tree structure from flat file list
   function buildTree(files: GitHubFile[]) {
@@ -75,17 +95,7 @@ export function GitHubFileTree({
 
   const tree = buildTree(files)
 
-  function toggleDir(path: string) {
-    setExpandedDirs((prev) => {
-      const next = new Set(prev)
-      if (next.has(path)) {
-        next.delete(path)
-      } else {
-        next.add(path)
-      }
-      return next
-    })
-  }
+  
 
   function renderTree(node: any, currentPath: string = "", level: number = 0) {
     const dirs = Object.entries(node.children)
