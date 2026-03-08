@@ -1,5 +1,5 @@
 "use client"
-
+//github single user playground
 import { useState, useEffect, useCallback, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { 
@@ -594,6 +594,75 @@ const remoteState = useGitWorkspace(state => state.remoteState)
   setFolderToDelete(null)
 
   }
+
+  async function handleRenameFile(file: GitHubFile, newName: string) {
+  // Build the new path — same directory, new filename
+  const dir = file.path.includes("/")
+    ? file.path.substring(0, file.path.lastIndexOf("/"))
+    : ""
+  const newPath = dir ? `${dir}/${newName}` : newName
+
+  // Guard: new path already exists
+  if (files.some(f => f.path === newPath)) {
+    toast.error(`"${newName}" already exists`)
+    return
+  }
+
+  // ── Step 1: Handle old path (delete side) ──
+  if (activeFile?.path === file.path) {
+    closeFile(file.path)
+  }
+
+  removeFileFromTree(file.path)
+
+  if (!file.sha) {
+    // Local-only file — just untrack
+    unmarkFileCreated(file.path)
+  } else {
+    // GitHub file — stage for deletion
+    markFileDeleted(file.path)
+  }
+
+  // ── Step 2: Handle new path (add side) ──
+  // Carry over the content from the old file
+  const currentContent =
+    openFiles.find(f => f.path === file.path)?.content ??
+    file.content ??
+    ""
+
+  const newFile: GitHubFile = {
+    name: newName,
+    path: newPath,
+    sha: "",           // not on GitHub yet
+    size: currentContent.length,
+    type: "file",
+    content: currentContent,
+  }
+
+  addFileToTree(newFile)
+  markFileCreated(newPath)
+
+  // Open the renamed file so user doesn't lose their place
+  openFileInWorkspace(newFile)
+
+  // Mirror in WebContainer if running
+  if (webContainerInstance && isReady) {
+    try {
+      // Write new path
+      const dir = newPath.split("/").slice(0, -1).join("/")
+      if (dir) await webContainerInstance.fs.mkdir(`/${dir}`, { recursive: true })
+      await webContainerInstance.fs.writeFile(`/${newPath}`, currentContent, "utf-8")
+      // Remove old path
+      await webContainerInstance.fs.rm(`/${file.path}`)
+    } catch (e) {
+      console.warn("WC rename sync failed:", e)
+    }
+  }
+
+  toast.success(`Renamed to ${newName}`, {
+    description: "Staged as D + A. Commit via Source Control.",
+  })
+}
   useEffect(() => {
   if (!isReady || !webContainerInstance) return
   if(draftRestoredAt === 0) return;
@@ -802,44 +871,57 @@ const handleFileCreated = async (filePath: string, parentPath: string) => {
     }
     
     const handleFileRenamed = async (oldPath: string, newPath: string, parentPath: string) => {
-      if (manuallyCreatedFilesRef.current.has(newPath)) return
-      
-      console.log(`✏️ [GITHUB] File renamed: ${oldPath} → ${newPath}`)
-      
-      try {
-        const oldFile = files.find(f => f.path === oldPath)
-        if (!oldFile) {
-          console.warn(`File not found: ${oldPath}`)
-          return
-        }
-        
-        const content = await webContainerInstance.fs.readFile(`/${newPath}`, 'utf-8')
-        
-        const newFile: GitHubFile = {
-          ...oldFile,
-          name: newPath.split('/').pop() || '',
-          path: newPath,
-          sha: '',
-          content,
-        }
-        
-        removeFileFromTree(oldPath)
-        addFileToTree(newFile)
-        
-        if (activeFile?.path === oldPath) {
-          closeFile(oldPath)
-          openFileInWorkspace(newFile)
-        }
-        
-        manuallyCreatedFilesRef.current.add(newPath)
-        setTimeout(() => manuallyCreatedFilesRef.current.delete(newPath), 3000)
-        
-        toast.info(`✏️ Renamed ${oldPath.split('/').pop()} → ${newPath.split('/').pop()} (not committed)`, {
-          description: 'Commit when ready'
-        })
-      } catch (error) {
-        console.error(`❌ Failed to rename file:`, error)
+       if (manuallyCreatedFilesRef.current.has(newPath)) return
+  if (useGitWorkspace.getState().isSwitchingBranch) return
+
+  console.log(`✏️ [GITHUB] File renamed (treated as D+A): ${oldPath} → ${newPath}`)
+
+  try {
+    // --- 1. Handle the OLD path (delete) ---
+    const oldFile = files.find(f => f.path === oldPath)
+
+    if (oldFile) {
+      removeFileFromTree(oldPath)
+
+      if (!oldFile.sha) {
+        // Local-only file: just untrack it, nothing to stage
+        unmarkFileCreated(oldPath)
+      } else {
+        // GitHub file: stage for deletion
+        markFileDeleted(oldPath)
       }
+
+      if (activeFile?.path === oldPath) {
+        closeFile(oldPath)
+      }
+    }
+
+    // --- 2. Handle the NEW path (add) ---
+    const content = await webContainerInstance.fs.readFile(`/${newPath}`, 'utf-8')
+
+    const newFile: GitHubFile = {
+      name: newPath.split('/').pop() || '',
+      path: newPath,
+      sha: '',           // brand new — not on GitHub yet
+      size: content.length,
+      type: 'file',
+      content,
+    }
+
+    addFileToTree(newFile)
+    markFileCreated(newPath)
+
+    if (parentPath) {
+      setExpandedDirs(prev => new Set([...prev, parentPath]))
+    }
+
+    toast.info(
+      `${oldPath.split('/').pop()} → ${newPath.split('/').pop()}`,
+      { description: 'Staged as D + A. Commit via Source Control.' }
+    )
+  } catch (error) {
+    console.error(`❌ Failed to handle rename:`, error)
+  }
     }
     
     fileCreationWatcher.initialize(
@@ -1002,6 +1084,7 @@ const handleFileCreated = async (filePath: string, parentPath: string) => {
               modifiedFiles={modifiedFiles}
               createdFiles={createdFiles}
               deletedFiles={deletedFiles}
+              onRenameFile={handleRenameFile}
             />
           )}
         </div>
