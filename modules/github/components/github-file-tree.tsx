@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { ChevronRight, ChevronDown, File, Folder, Plus, FilePlus, FolderPlus, MoreHorizontal, Trash2 } from "lucide-react"
+import { ChevronRight, ChevronDown, File, Folder, Plus, FilePlus, FolderPlus, MoreHorizontal, Trash2 ,Pencil} from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
   DropdownMenu,
@@ -27,6 +27,8 @@ interface FileTreeProps {
   onCreateFolder?: (path: string) => void
   onDeleteFile?: (file: GitHubFile) => void
   onDeleteFolder?: (folderPath: string, folderName: string) => void 
+  onRenameFile?: (file: GitHubFile, newName: string) => void
+  onRenameFolder?: (folderPath: string, folderName: string, newName: string) => void
   expandedDirs?: Set<string> 
   onExpandedDirsChange?: (dirs: Set<string>) => void 
   modifiedFiles?: Set<string>
@@ -47,8 +49,12 @@ export function GitHubFileTree({
   modifiedFiles,
   createdFiles,
   deletedFiles,
+  onRenameFile,
+  onRenameFolder,
 }: FileTreeProps) {
   const [internalExpandedDirs, setInternalExpandedDirs] = useState<Set<string>>(new Set([""]))
+  const [renamingPath, setRenamingPath] = useState<string | null>(null)
+const [renameValue, setRenameValue] = useState("")
 
   
   const expandedDirs = controlledExpandedDirs ?? internalExpandedDirs
@@ -180,15 +186,46 @@ export function GitHubFileTree({
               onClick={() => onFileSelect(file)}
             >
               <File className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <span className="truncate">{file.name}</span>
-              {modifiedFiles?.has(file.path) && (
-        <span className="ml-auto text-xs text-orange-500">M</span>
-      )}
-      {createdFiles?.has(file.path) && (
-        <span className="ml-auto text-xs text-green-500">A</span>
-      )}
-      {deletedFiles?.has(file.path) && (
-        <span className="ml-auto text-xs text-red-500">D</span>
+               {renamingPath === file.path ? (
+        <input
+          autoFocus
+          className="flex-1 bg-background border border-primary rounded px-1 text-sm outline-none"
+          value={renameValue}
+          onChange={e => setRenameValue(e.target.value)}
+          onBlur={() => {
+            const trimmed = renameValue.trim()
+            if (trimmed && trimmed !== file.name) {
+              onRenameFile?.(file, trimmed)
+            }
+            setRenamingPath(null)
+          }}
+          onKeyDown={e => {
+            if (e.key === "Enter") {
+              const trimmed = renameValue.trim()
+              if (trimmed && trimmed !== file.name) {
+                onRenameFile?.(file, trimmed)
+              }
+              setRenamingPath(null)
+            }
+            if (e.key === "Escape") {
+              setRenamingPath(null)
+            }
+          }}
+          onClick={e => e.stopPropagation()}
+        />
+      ) : (
+        <>
+          <span className="truncate">{file.name}</span>
+          {modifiedFiles?.has(file.path) && (
+            <span className="ml-auto text-xs text-orange-500">M</span>
+          )}
+          {createdFiles?.has(file.path) && (
+            <span className="ml-auto text-xs text-green-500">A</span>
+          )}
+          {deletedFiles?.has(file.path) && (
+            <span className="ml-auto text-xs text-red-500">D</span>
+          )}
+        </>
       )}
             </div>
 
@@ -204,14 +241,26 @@ export function GitHubFileTree({
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem 
-                    onClick={() => onDeleteFile(file)}
-                    className="text-destructive"
-                  >
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
+  {onRenameFile && (
+    <DropdownMenuItem
+      onClick={() => {
+        setRenameValue(file.name)
+        setRenamingPath(file.path)
+      }}
+    >
+      <Pencil className="h-4 w-4 mr-2" />
+      Rename
+    </DropdownMenuItem>
+  )}
+  {onRenameFile && <DropdownMenuSeparator />}
+  <DropdownMenuItem
+    onClick={() => onDeleteFile(file)}
+    className="text-destructive"
+  >
+    <Trash2 className="h-4 w-4 mr-2" />
+    Delete
+  </DropdownMenuItem>
+</DropdownMenuContent>
               </DropdownMenu>
             )}
           </div>
