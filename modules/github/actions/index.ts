@@ -247,6 +247,7 @@ export async function saveWorkspaceDraft(draft: {
   modifiedFiles: { path: string; content: string; sha: string }[];
   createdFiles: { path: string; content: string }[];
   deletedFiles: string[];
+  sessionId?:string
 }) {
   try {
     const session = await auth();
@@ -254,24 +255,27 @@ export async function saveWorkspaceDraft(draft: {
       return { success: false, error: 'Not authenticated' };
     }
 
+    const storageKey = draft.sessionId?`${draft.branch}::session::${draft.sessionId}`:draft.branch;
+
     // Upsert draft (update if exists, create if not)
     await prisma.workspaceDraft.upsert({
       where: {
         userId_repoFullName_branch: {
           userId: session.user.id,
           repoFullName: draft.repoFullName,
-          branch: draft.branch,
+          branch: storageKey,
         },
       },
       create: {
         userId: session.user.id,
         repoFullName: draft.repoFullName,
-        branch: draft.branch,
+        branch: storageKey,
         modifiedFiles: draft.modifiedFiles,
         createdFiles: draft.createdFiles,
         deletedFiles: draft.deletedFiles,
         lastSaved: new Date(),
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7 days
+        sessionId:draft.sessionId??null,
       },
       update: {
         modifiedFiles: draft.modifiedFiles,
@@ -291,19 +295,20 @@ export async function saveWorkspaceDraft(draft: {
   }
 }
 
-export async function loadWorkspaceDraft(repoFullName: string, branch: string) {
+export async function loadWorkspaceDraft(repoFullName: string, branch: string,sessionId?:string) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
       return { success: false, error: 'Not authenticated' };
     }
+    const storageKey = sessionId?`${branch}::session::${sessionId}`:branch;
 
     const draft = await prisma.workspaceDraft.findUnique({
       where: {
         userId_repoFullName_branch: {
           userId: session.user.id,
           repoFullName,
-          branch,
+          branch: storageKey,
         },
       },
     });
@@ -313,7 +318,7 @@ export async function loadWorkspaceDraft(repoFullName: string, branch: string) {
     }
 
     console.log(`📂 [Draft] Loaded: ${repoFullName} (${branch})`);
-    return { success: true, data: draft };
+    return { success: true, data: { ...draft, branch: branch } };
     
   } catch (error: any) {
     console.error('Error loading workspace draft:', error);
@@ -321,19 +326,21 @@ export async function loadWorkspaceDraft(repoFullName: string, branch: string) {
   }
 }
 
-export async function deleteWorkspaceDraft(repoFullName: string, branch: string) {
+export async function deleteWorkspaceDraft(repoFullName: string, branch: string,sessionId?:string) {
   try {
     const session = await auth();
     if (!session?.user?.id) {
       return { success: false, error: 'Not authenticated' };
     }
 
+    const storageKey = sessionId?`${branch}::session::${sessionId}`:branch;
+
     await prisma.workspaceDraft.delete({
       where: {
         userId_repoFullName_branch: {
           userId: session.user.id,
           repoFullName,
-          branch,
+          branch: storageKey,
         },
       },
     });

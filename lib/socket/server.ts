@@ -435,6 +435,26 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
 
                 const isHost = session.hostId === userId;
                 const role = isHost ? "Host" : "Guest";
+                if (!isHost) {
+  // Guest trying to join — check if host is present in the room
+  const room = io!.sockets.adapter.rooms.get(sessionId);
+  const socketsInRoom = room ? Array.from(room) : [];
+  
+  // Check if any socket in the room belongs to the host
+  const hostPresent = socketsInRoom.some(socketId => {
+    const s = io!.sockets.sockets.get(socketId) as CollabSocket;
+    return s?.userId === session.hostId;
+  });
+
+  if (!hostPresent) {
+    console.log(`❌ Guest ${userName} blocked — host not present in session ${sessionId}`);
+    socket.emit("collab:error", { 
+      message: "HOST_NOT_PRESENT",
+      details: "The host has not joined yet. Please wait for the host to start the session."
+    });
+    return;
+  }
+}
 
                 console.log(`🎭 Role determined: ${role} (hostId: ${session.hostId}, userId: ${userId})`);
                 const userWithImage = await prisma.user.findUnique({
@@ -869,6 +889,49 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
             io!.to(state.hostSocketId).emit("webcontainer:command", data);
           }
         });
+
+        socket.on("workspace:request-snapshot", (data: { sessionId: string }) => {
+  console.log(`📸 [SERVER] Guest ${socket.id} requesting workspace snapshot for ${data.sessionId}`);
+  const room = io!.sockets.adapter.rooms.get(data.sessionId);
+  const otherSockets = room ? room.size - 1 : 0; // minus the requester
+
+  if (otherSockets === 0) {
+    // No host in room — tell guest to fall back immediately
+    console.log(`⚠️ [SERVER] No host in session ${data.sessionId} — emitting snapshot-unavailable`);
+    socket.emit("workspace:snapshot-unavailable", { sessionId: data.sessionId });
+    return;
+  }
+ 
+  socket.to(data.sessionId).emit("workspace:snapshot-requested", {
+    sessionId: data.sessionId,
+    requesterSocketId: socket.id,
+  });
+  console.log(`✅ [SERVER] Snapshot request forwarded to host for session ${data.sessionId}`);
+ 
+ 
+});
+socket.on("workspace:snapshot", (data: {
+  sessionId: string;
+  requesterSocketId: string;
+  snapshot: {
+    files: any[];
+    modifiedFiles: string[];
+    createdFiles: string[];
+    deletedFiles: string[];
+    repoFullName: string;
+    branch: string;
+  };
+}) => {
+  console.log(`📸 [SERVER] Host sending snapshot to guest ${data.requesterSocketId}`);
+ 
+  // Send directly to the requesting guest socket only
+  io!.to(data.requesterSocketId).emit("workspace:snapshot", {
+    sessionId: data.sessionId,
+    snapshot: data.snapshot,
+  });
+ 
+  console.log(`✅ [SERVER] Snapshot delivered to ${data.requesterSocketId}`);
+});
 
         // ============================================
         // DISCONNECT - Cleanup

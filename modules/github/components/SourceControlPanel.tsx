@@ -23,12 +23,14 @@ import { toast } from "sonner"
 interface SourceControlPanelProps {
   onCommit: (message: string, description?: string) => Promise<void>
   onViewDiff: (filePath: string) => void
+  onDiscardFile?: (filePath: string) => void
   isCommitting?: boolean
 }
 
 export function SourceControlPanel({ 
   onCommit, 
   onViewDiff,
+  onDiscardFile,
   isCommitting = false 
 }: SourceControlPanelProps) {
   const [commitMessage, setCommitMessage] = useState("")
@@ -256,7 +258,8 @@ export function SourceControlPanel({
                       size="sm"
                       onClick={(e) => {
                         e.stopPropagation()
-                        discardFileChanges(path)
+                        onDiscardFile?onDiscardFile(path) :discardFileChanges(path)
+                        
                       }}
                       className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100"
                     >

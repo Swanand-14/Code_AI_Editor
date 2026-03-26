@@ -20,14 +20,15 @@ export function useRestoreDraft() {
   const restoreDraft = async (
     repoFullName: string,
     branch: string,
-    webContainerInstance: any | null
+    webContainerInstance: any | null,
+    sessionId?:string
   ) => {
     setIsRestoring(true);
     
     try {
       console.log(`🔍 [Draft] Checking for draft: ${repoFullName} (${branch})`);
       
-      const result = await loadWorkspaceDraft(repoFullName, branch);
+      const result = await loadWorkspaceDraft(repoFullName, branch,sessionId);
       
       if (!result.success || !result.data) {
         console.log(`ℹ️ [Draft] No draft found`);

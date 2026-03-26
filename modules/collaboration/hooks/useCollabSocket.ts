@@ -56,7 +56,7 @@ export interface FileActionPayload {
   content?: string;
 }
 
-export function useCollabSocket(sessionId: string, userId?: string, userName?: string) {
+export function useCollabSocket(sessionId: string, userId?: string, userName?: string,onError?:(message:string,details?:string) => void) {
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [participants, setParticipants] = useState<CollabUser[]>([]);
@@ -145,8 +145,9 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
       setParticipants((prev) => prev.filter((p) => p.userId !== data.userId));
     });
 
-    socketInstance.on("collab:error", (data: { message: string }) => {
+    socketInstance.on("collab:error", (data: { message: string,details:string }) => {
       console.error("❌ Collaboration error:", data.message);
+      onError?.(data.message,data.details);
     });
 
     // Cleanup

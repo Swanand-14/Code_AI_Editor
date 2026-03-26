@@ -57,7 +57,25 @@ export async function updateCollabWorkspace(data: {
     return { success: false, error: "Failed to update workspace" };
   }
 }
-export async function getAllCollabWorkspaces() {
+export interface CollabWorkspaceRow {
+  id: string;
+  name: string;
+  sessionId: string;
+  templateData: any;
+  originalTemplateName?: string | null;
+  fileCount: number;
+  totalSize: number;
+  lastSavedAt: Date;
+  createdAt: Date;
+  owner: { id: string; name: string; image?: string | null };
+  // The joined field — "starter" | "github"
+  projectType: string;
+  // GitHub-specific (null for starter sessions)
+  repoOwner?: string | null;
+  repoName?: string | null;
+  branch?: string | null;
+}
+export async function getAllCollabWorkspaces():Promise<CollabWorkspaceRow[]> {
   try {
     const user = await currentUser();
     if (!user?.id) return [];
@@ -76,7 +94,44 @@ export async function getAllCollabWorkspaces() {
       orderBy: { updatedAt: "desc" },
     });
 
-    return workspaces;
+     const sessionIds = workspaces.map((w) => w.sessionId);
+
+    const sessions = await prisma.collabSession.findMany({
+      where: { sessionId: { in: sessionIds } },
+      select: {
+        sessionId: true,
+        projectType: true,
+        repoOwner: true,
+        repoName: true,
+        branch: true,
+      },
+    });
+
+    const sessionMap = new Map(sessions.map((s) => [s.sessionId, s]));
+
+    return workspaces.map((w) => {
+      const session = sessionMap.get(w.sessionId);
+      return {
+        id: w.id,
+        name: w.name,
+        sessionId: w.sessionId,
+        templateData: w.templateData,
+        originalTemplateName: w.originalTemplateName,
+        fileCount: w.fileCount,
+        totalSize: w.totalSize,
+        lastSavedAt: w.lastSavedAt,
+        createdAt: w.createdAt,
+        owner: {
+          id: w.owner.id,
+          name: w.owner.name ?? "",
+          image: w.owner.image,
+        },
+        projectType: session?.projectType ?? "starter",
+        repoOwner: session?.repoOwner ?? null,
+        repoName: session?.repoName ?? null,
+        branch: session?.branch ?? null,
+      };
+    });
   } catch (error) {
     console.error("❌ Error fetching workspaces:", error);
     return [];
