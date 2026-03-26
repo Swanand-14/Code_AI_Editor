@@ -8,13 +8,14 @@ interface AutosaveOptions {
   currentBranch: string;
   enabled: boolean;
   intervalMs?: number; // Default: 10000 (10 seconds)
+  sessionId?:string
 }
 
 export function useWorkspaceAutosave({
   repoFullName,
   currentBranch,
   enabled,
-  intervalMs = 10000,
+  intervalMs = 10000,sessionId
 }: AutosaveOptions) {
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastSaveRef = useRef<string>(''); // Hash of last saved state
@@ -61,6 +62,7 @@ export function useWorkspaceAutosave({
       const draft = {
         repoFullName,
         branch: currentBranch,
+        sessionId:sessionId || '',
         modifiedFiles: changes
           .filter(c => c.type === 'modified')
           .map(c => ({
@@ -112,5 +114,5 @@ export function useWorkspaceAutosave({
         console.log(`🛑 [Autosave] Stopped`);
       }
     };
-  }, [repoFullName, currentBranch, enabled, intervalMs, getAllChanges, hasUnsavedChanges]);
+  }, [repoFullName, currentBranch, enabled, intervalMs, getAllChanges, hasUnsavedChanges,sessionId]);
 }

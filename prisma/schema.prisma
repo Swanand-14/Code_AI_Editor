@@ -231,6 +231,7 @@ model CollabWorkspace {
 model WorkspaceDraft {
 id            String   @id @default(auto()) @map("_id") @db.ObjectId
 userId        String   @db.ObjectId
+sessionId     String?  
 repoFullName  String
 branch        String
 modifiedFiles Json
@@ -243,5 +244,6 @@ user          User     @relation("WorkspaceDrafts", fields: [userId], references
 @@unique([userId, repoFullName, branch])
 @@index([expiresAt])
 @@index([userId])
+@@index([sessionId])
 @@map("workspace_drafts")
 }

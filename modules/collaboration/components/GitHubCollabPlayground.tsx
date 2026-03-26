@@ -64,6 +64,13 @@ import PlaygroundEditor from "@/modules/playground/components/playgroundEditor";
 
 // Phase 1 collab bridge
 import { useCollabWorkspace } from "@/modules/collaboration/hooks/useCollabWorkspace";
+import { useWorkspaceAutosave } from "../../github/hooks/useWorkspaceAutoSave";
+import { useRestoreDraft } from "@/modules/github/hooks/useRestoreDraft";
+import { useRemoteCursors } from "../hooks/useRemoteCursors";
+import { useProximityWarnings } from "../hooks/useProximityWarnings";
+import { editor } from "monaco-editor";
+import { set } from "zod";
+
 interface GitHubFile {
   name: string;
   path: string;
@@ -114,13 +121,33 @@ export function GitHubCollabPlayground({ session }: GitHubCollabPlaygroundProps)
 
   const terminalRef = useRef<TerminalRef>(null);
   const [isTerminalReady, setIsTerminalReady] = useState(false);
+  const [snapshotPending, setSnapshotPending] = useState(false);
   const autoStartAttempted = useRef(false);
   const manuallyCreatedFilesRef = useRef<Set<string>>(new Set());
+  const needsSnapshotRef = useRef(false);
+  const snapshotResolveRef = useRef<(()=>void | null)>(null);
+  const [draftRestoredAt, setDraftRestoredAt] = useState(0);
+const [snapshotReceivedAt, setSnapshotReceivedAt] = useState(0);
 
-    const {socket,isConnected, emitFileOpen } = useCollabSocket(
+const [localCursorPosition, setLocalCursorPosition] = useState<{lineNumber: number; column: number}>({lineNumber: 1, column: 1});
+const [hostNotPresent,setHostNotPresent] = useState(false);
+const editorInstanceRef = useRef<editor.IStandaloneCodeEditor | null>(null);
+
+const hostNotPresentRef = useRef(false);
+
+
+
+    const {socket,isConnected, emitFileOpen,emitCursorMove } = useCollabSocket(
         session.sessionId,
         user?.id,
-        user?.name
+        user?.name,
+        (message,details) => {
+          if(message === "HOST_NOT_PRESENT"){
+            setHostNotPresent(true);
+            setIsJoining(false);
+            setHostNotPresent(true);
+          }
+        }
     )
 
     const {participants,activityLogs,updateActivity} = useCollabParticipants({
@@ -152,16 +179,7 @@ export function GitHubCollabPlayground({ session }: GitHubCollabPlaygroundProps)
   const openFiles   = useGitWorkspace((s) => s.openFiles);
   const remoteState = useGitWorkspace((s) => s.remoteState);
 
-  const {
-    broadcastContentChange,
-    broadcastFileCreate,
-    broadcastFileDelete,
-    broadcastFileRename,
-  } = useCollabWorkspace({
-    socket,
-    sessionId: session.sessionId,
-    currentUserId: user?.id,
-  });
+  
 
   const {
     serverUrl,
@@ -181,7 +199,44 @@ export function GitHubCollabPlayground({ session }: GitHubCollabPlaygroundProps)
     currentBranch: session.branch,
     terminalRef,
     autoStart: false,
+     
   });
+  const {
+    broadcastContentChange,
+    broadcastFileCreate,
+    broadcastFileDelete,
+    broadcastFileRename,
+    requestSnapshot,
+
+  } = useCollabWorkspace({
+    socket,
+    sessionId: session.sessionId,
+    currentUserId: user?.id,
+    isHost,
+     webContainerInstance,  // ← ADD
+  isReady,  
+  });
+  const { remoteCursors, CursorsInCurrentFile } = useRemoteCursors({
+  socket,
+  sessionId: session.sessionId,
+  currentUserId: user?.id,
+  currentFileId: activeFile?.sha || activeFile?.path,
+});
+
+useProximityWarnings({
+  remoteCursors: CursorsInCurrentFile,
+  localCursorLine: localCursorPosition.lineNumber,
+  enabled: true,
+});
+
+  useWorkspaceAutosave({
+    repoFullName: `${session.repoOwner}/${session.repoName}`,
+    currentBranch: session.branch??"main",
+    enabled: isHost, // Only host triggers autosave (which in this case is direct commit)
+    sessionId: session.sessionId,
+  })
+
+  const {restoreDraft} = useRestoreDraft();
 
 
     const loadRepositoryTree = useCallback(async () => {
@@ -251,19 +306,94 @@ export function GitHubCollabPlayground({ session }: GitHubCollabPlaygroundProps)
                 const currentUserData = await currentUser()
                 if(!mounted)return;
                 setUser(currentUserData?{id:currentUserData.id!,name:currentUserData.name!,image:currentUserData.image}:null);
+                 const isCurrentUserHost = currentUserData?.id === session.hostId;
                 const result = await joinCollabSession(session.sessionId);
                 if(!mounted)return;
-                if(!result.success){
-                    setJoinError(result.error || "Failed to join session");
-                    toast.error(result.error)
-                    setIsJoining(false)
-                    return;
-                }
+                if (!result.success) {
+          // Session expired/dead — guests see an error, host gets crash recovery
+          if (!isCurrentUserHost) {
+            setJoinError(result.error || "Session has expired");
+            toast.error(result.error);
+            return;
+          }
+          // Host: fall through — load tree + restore draft below
+          console.log("💾 [Draft] Session expired — host entering crash recovery mode");
+          toast.info("Session has ended — restoring your last saved draft");
+        } else {
+          if (mounted) toast.success("Successfully joined Github Collaboration session");
+        }
+        if (!isCurrentUserHost) {
+        const hostCheckPassed = await new Promise<boolean>((resolve) => {
+          // If already flagged before this point, bail immediately
+          if (hostNotPresentRef.current) {
+            resolve(false);
+            return;
+          }
 
-                if(mounted){
-                    toast.success("Successfully joined Github Collaboration session");
-                }
-                await loadRepositoryTree();
+          const TIMEOUT = 10000;
+
+          const onJoined = () => {
+            clearTimeout(timer);
+            cleanup();
+            resolve(true);
+          };
+
+          const onError = (data: { message: string }) => {
+            if (data.message === "HOST_NOT_PRESENT") {
+              clearTimeout(timer);
+              cleanup();
+              resolve(false);
+            }
+          };
+
+          const cleanup = () => {
+            socket?.off("collab:joined", onJoined);
+            socket?.off("collab:error", onError);
+          };
+
+          const timer = setTimeout(() => {
+            cleanup();
+            resolve(true); // timeout = assume ok, proceed with GitHub fallback
+          }, TIMEOUT);
+
+          socket?.on("collab:joined", onJoined);
+          socket?.on("collab:error", onError);
+        });
+
+        if (!hostCheckPassed) {
+          console.log("❌ [Join] Host not present — aborting join");
+          return; // stop here, UI already shows hostNotPresent screen
+        }
+      }
+
+        // Always load the clean GitHub base first
+        await loadRepositoryTree();
+        if (!mounted) return;
+
+        // Host always restores draft on top of clean GitHub state.
+        //
+        // Why always — not just when session is dead:
+        //   The socket room has zero persistence. The WorkspaceDraft is the
+        //   ONLY storage of uncommitted changes (modified, created, deleted files).
+        //   Whether the session is live or expired, the draft is always the
+        //   correct uncommitted state to layer on top of the GitHub tree.
+        //   If no draft exists (first join or post-commit), restoreDraft is a
+        //   no-op and the clean GitHub tree is the starting state.
+        if (isCurrentUserHost) {
+          await restoreDraft(
+            `${session.repoOwner}/${session.repoName}`,
+            session.branch ?? "main",
+            webContainerInstance ?? null,
+            session.sessionId
+            
+          );
+          setDraftRestoredAt(prev => prev + 1);
+        }else{
+           console.log("[snapshot] Guest flagging snapshot needed");
+           needsSnapshotRef.current = true;
+           setSnapshotPending(true);
+  
+        }
             } catch (error) {
                 console.error("❌ Error joining session:", error);
         if (mounted) {
@@ -310,6 +440,138 @@ export function GitHubCollabPlayground({ session }: GitHubCollabPlaygroundProps)
 
     return () => clearTimeout(timer);
   }, [isReady, isTerminalReady, isServerRunning, isWebContainerSupported, startServer]);
+  useEffect(() => {
+  // Only run for guests, only when socket becomes ready
+  if (isHost || !socket || !needsSnapshotRef.current || !snapshotPending) return;
+
+
+  console.log("[snapshot] Socket ready — sending snapshot request");
+  needsSnapshotRef.current = false;
+  setSnapshotPending(false);
+
+  const TIMEOUT_MS = 8000;
+
+  const cleanup = () => {
+    socket.off("workspace:snapshot", onSnapshot);
+    socket.off("workspace:snapshot-unavailable", onFallback);
+  };
+
+  const onSnapshot = () => {
+    clearTimeout(timer);
+    cleanup();
+    console.log("✅ [Snapshot] Received host snapshot");
+    setSnapshotReceivedAt(prev => prev + 1);
+    
+  };
+
+  const onFallback = () => {
+    clearTimeout(timer);
+    cleanup();
+    console.log("⚠️ [Snapshot] Host unavailable — falling back");
+    loadRepositoryTree();
+  };
+
+  const timer = setTimeout(() => {
+    cleanup();
+    console.log("⏱️ [Snapshot] Timeout — falling back to GitHub tree");
+    loadRepositoryTree();
+  }, TIMEOUT_MS);
+
+  socket.on("workspace:snapshot", onSnapshot);
+  socket.on("workspace:snapshot-unavailable", onFallback);
+  
+  // NOW it's safe to request — listeners are attached first
+  requestSnapshot(session.sessionId);
+
+  return () => {
+    clearTimeout(timer);
+    cleanup();
+  };
+}, [socket, snapshotPending,isHost, session.sessionId, requestSnapshot, loadRepositoryTree]);
+
+// Host: apply restored draft to WebContainer filesystem
+useEffect(() => {
+  if (!isReady || !webContainerInstance || draftRestoredAt === 0) return;
+
+  const state = useGitWorkspace.getState();
+  const { modifiedFiles, createdFiles, openFiles, deletedFiles } = state;
+
+  if (modifiedFiles.size === 0 && createdFiles.size === 0 && deletedFiles.size === 0) return;
+
+  console.log("🔄 [Collab Host] Applying draft to WebContainer...");
+
+  async function applyDraftToWC() {
+    for (const path of modifiedFiles) {
+      const openFile = openFiles.find(f => f.path === path);
+      if (openFile?.content) {
+        try {
+          await webContainerInstance!.fs.writeFile(`/${path}`, openFile.content, "utf-8");
+          console.log(`✅ Applied modified: ${path}`);
+        } catch (e) { console.warn(`⚠️ Failed modified: ${path}`, e); }
+      }
+    }
+    for (const path of createdFiles) {
+      const openFile = openFiles.find(f => f.path === path);
+      const content = openFile?.content ?? "";
+      try {
+        const dir = path.split("/").slice(0, -1).join("/");
+        if (dir) await webContainerInstance!.fs.mkdir(`/${dir}`, { recursive: true });
+        await webContainerInstance!.fs.writeFile(`/${path}`, content, "utf-8");
+        console.log(`✅ Applied created: ${path}`);
+      } catch (e) { console.warn(`⚠️ Failed created: ${path}`, e); }
+    }
+    for (const path of deletedFiles) {
+      try {
+        await webContainerInstance!.fs.rm(`/${path}`);
+        console.log(`✅ Applied deleted: ${path}`);
+      } catch {}
+    }
+    console.log("✅ [Collab Host] Draft applied to WebContainer");
+  }
+
+  applyDraftToWC();
+}, [isReady, webContainerInstance, draftRestoredAt]);
+
+// Guest: apply host snapshot to WebContainer filesystem
+useEffect(() => {
+  if (!isReady || !webContainerInstance || snapshotReceivedAt === 0) return;
+
+  const state = useGitWorkspace.getState();
+  const { modifiedFiles, createdFiles, openFiles, deletedFiles } = state;
+
+  console.log("🔄 [Collab Guest] Applying snapshot to WebContainer...");
+
+  async function applySnapshotToWC() {
+    for (const path of modifiedFiles) {
+      const openFile = openFiles.find(f => f.path === path);
+      if (openFile?.content) {
+        try {
+          await webContainerInstance!.fs.writeFile(`/${path}`, openFile.content, "utf-8");
+          console.log(`✅ Applied modified: ${path}`);
+        } catch (e) { console.warn(`⚠️ Failed modified: ${path}`, e); }
+      }
+    }
+    for (const path of createdFiles) {
+      const openFile = openFiles.find(f => f.path === path);
+      const content = openFile?.content ?? "";
+      try {
+        const dir = path.split("/").slice(0, -1).join("/");
+        if (dir) await webContainerInstance!.fs.mkdir(`/${dir}`, { recursive: true });
+        await webContainerInstance!.fs.writeFile(`/${path}`, content, "utf-8");
+        console.log(`✅ Applied created: ${path}`);
+      } catch (e) { console.warn(`⚠️ Failed created: ${path}`, e); }
+    }
+    for (const path of deletedFiles) {
+      try {
+        await webContainerInstance!.fs.rm(`/${path}`);
+        console.log(`✅ Applied deleted: ${path}`);
+      } catch {}
+    }
+    console.log("✅ [Collab Guest] Snapshot applied to WebContainer");
+  }
+
+  applySnapshotToWC();
+}, [isReady, webContainerInstance, snapshotReceivedAt]);
   const handleFileSelect = useCallback(
     async (file: GitHubFile) => {
       if (file.type === "dir") return;
@@ -674,9 +936,41 @@ export function GitHubCollabPlayground({ session }: GitHubCollabPlaygroundProps)
       session.branch,
     ]
   );
+  const handleDiscardFile = useCallback(async (filePath: string) => {
+  const state = useGitWorkspace.getState();
 
-    
+  const wasDeleted = state.deletedFiles.has(filePath);
+  const wasCreated = state.createdFiles.has(filePath);
+  const originalContent = state.remoteState.get(filePath) ?? "";
 
+  // Update Zustand
+  state.discardFileChanges(filePath);
+
+  // Sync host WebContainer
+  if (webContainerInstance && isReady) {
+    if (wasDeleted) {
+      const dir = filePath.split("/").slice(0, -1).join("/");
+      if (dir) await webContainerInstance.fs.mkdir(`/${dir}`, { recursive: true }).catch(() => {});
+      await webContainerInstance.fs.writeFile(`/${filePath}`, originalContent, "utf-8").catch(console.warn);
+    } else if (wasCreated) {
+      await webContainerInstance.fs.rm(`/${filePath}`).catch(() => {});
+    } else {
+      await webContainerInstance.fs.writeFile(`/${filePath}`, originalContent, "utf-8").catch(console.warn);
+    }
+  }
+
+  // Broadcast to guests
+  if (wasDeleted) {
+    broadcastFileCreate(filePath, originalContent);
+  } else if (wasCreated) {
+    broadcastFileDelete(filePath);
+  } else {
+    broadcastContentChange(filePath, "", originalContent);
+  }
+
+}, [webContainerInstance, isReady, broadcastFileCreate, broadcastFileDelete, broadcastContentChange]);
+
+ 
    if (isJoining) {
     return (
       <div className="flex flex-col items-center justify-center h-screen p-4">
@@ -703,6 +997,33 @@ export function GitHubCollabPlayground({ session }: GitHubCollabPlaygroundProps)
       </div>
     );
   }
+  if (hostNotPresent) {
+  return (
+    <div className="flex flex-col items-center justify-center h-screen p-4">
+      <div className="w-full max-w-md p-8 rounded-lg shadow-sm border text-center space-y-4">
+        <div className="flex justify-center">
+          <div className="h-16 w-16 rounded-full bg-amber-100 flex items-center justify-center">
+            <Users className="h-8 w-8 text-amber-600" />
+          </div>
+        </div>
+        <h1 className="text-2xl font-bold">Host Not Present</h1>
+        <p className="text-muted-foreground">
+          The session host hasn't joined yet. The host needs to be present before guests can join.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Session: <span className="font-mono text-foreground">{session.sessionId}</span>
+        </p>
+        <Button 
+          onClick={() => window.location.reload()}
+          className="w-full"
+        >
+          <RefreshCw className="h-4 w-4 mr-2" />
+          Try Again
+        </Button>
+      </div>
+    </div>
+  );
+}
 
   const expiresAt = new Date(session.expiresAt);
   const hoursRemaining = Math.max(
@@ -903,6 +1224,7 @@ export function GitHubCollabPlayground({ session }: GitHubCollabPlaygroundProps)
                 setDiffFilePath(filePath);
                 setShowDiff(true);
               }}
+              onDiscardFile={handleDiscardFile}
               isCommitting={isSaving}
             />
           )
@@ -1017,24 +1339,19 @@ export function GitHubCollabPlayground({ session }: GitHubCollabPlaygroundProps)
                   }}
                 />
               ) : activeFile ? (
-                <PlaygroundEditor
-                  activeFile={{
-                    filename:
-                      activeFile.path.split("/").pop()?.split(".")[0] || "file",
-                    fileExtension:
-                      activeFile.path.split(".").pop() || "txt",
-                    content: activeFile.content,
-                  }}
-                  content={activeFile.content}
-                  onContentChange={handleContentChange}
-                  suggestionLoading={false}
-                  suggestions={null}
-                  suggestionPosition={null}
-                  onAcceptSuggestion={() => {}}
-                  onRejectSuggestion={() => {}}
-                  onTriggerSuggestion={() => {}}
-                  disableAI={true}
-                />
+                <CollabEditor
+  sessionId={session.sessionId}
+  userId={user?.id}
+  userName={user?.name || "Anonymous"}
+  fileId={activeFile.sha || activeFile.path}
+  filePath={activeFile.path}
+  initialContent={activeFile.content}
+  language={getEditorLanguage(activeFile.path.split(".").pop() || "")}
+  onContentChange={handleContentChange}
+  remoteCursors={CursorsInCurrentFile}
+  onCursorPositionChange={setLocalCursorPosition}
+  onEditorReady={(editorInstance) => { editorInstanceRef.current = editorInstance; }}
+/>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
                   <GitBranch className="h-16 w-16 mb-4" />

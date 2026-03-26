@@ -39,13 +39,15 @@ interface UseCollabWorkspaceProps {
   currentUserId?: string;
   /** WebContainer instance — passed through but not used in Phase 1 */
   webContainerInstance?: any | null;
+  isHost?: boolean;
+  isReady?: boolean;
 }
 
 export function useCollabWorkspace({
   socket,
   sessionId,
   currentUserId,
-  webContainerInstance,
+  webContainerInstance,isHost = false,isReady
 }: UseCollabWorkspaceProps){
     const updateFileContent  = useGitWorkspace((s) => s.updateFileContent);
   const addFileToTree      = useGitWorkspace((s) => s.addFileToTree);
@@ -89,11 +91,16 @@ export function useCollabWorkspace({
       // updateFileContent drives both the open-file tab content and the
       // modifiedFiles set — same path as the single-user playground.
       updateFileContent(payload.filePath, payload.content);
+      if (webContainerInstance && isReady) {
+  webContainerInstance.fs
+    .writeFile(`/${payload.filePath}`, payload.content, "utf-8")
+    .catch(console.error);
+}
     },
-    [currentUserId, updateFileContent, openFileInWorkspace]
+    [currentUserId, updateFileContent, openFileInWorkspace,isReady, webContainerInstance]
   );
     const handleRemoteFileAction = useCallback(
-    (payload: FileActionPayload) => {
+    async(payload: FileActionPayload) => {
       if (payload.userId === currentUserId) return;
 
       console.log(
@@ -125,6 +132,13 @@ export function useCollabWorkspace({
           addFileToTree(newFile);
           // Pass content so the draft is correct if the file is opened
           markFileCreated(payload.filePath, payload.content ?? "");
+          if (webContainerInstance && isReady) {
+  const dir = payload.filePath.split("/").slice(0, -1).join("/");
+  if (dir) await webContainerInstance.fs.mkdir(`/${dir}`, { recursive: true }).catch(() => {});
+  await webContainerInstance.fs.writeFile(`/${payload.filePath}`, payload.content ?? "", "utf-8").catch(console.error);
+}
+
+          
           break;
         }
 
@@ -135,6 +149,10 @@ export function useCollabWorkspace({
           );
 
           removeFileFromTree(payload.filePath);
+          if (webContainerInstance && isReady) {
+  webContainerInstance.fs.rm(`/${payload.filePath}`).catch(() => {});
+}
+
 
           if (!target?.sha) {
             // Local-only file — just untrack
@@ -184,6 +202,12 @@ export function useCollabWorkspace({
 
           addFileToTree(renamedFile);
           markFileCreated(payload.newPath, currentContent);
+          if (webContainerInstance && isReady) {
+  const dir = payload.newPath!.split("/").slice(0, -1).join("/");
+  if (dir) await webContainerInstance.fs.mkdir(`/${dir}`, { recursive: true }).catch(() => {});
+  await webContainerInstance.fs.writeFile(`/${payload.newPath}`, currentContent, "utf-8").catch(console.error);
+  await webContainerInstance.fs.rm(`/${payload.filePath}`).catch(() => {});
+}
           break;
         }
 
@@ -200,24 +224,111 @@ export function useCollabWorkspace({
       removeFileFromTree,
       markFileDeleted,
       unmarkFileCreated,
+      webContainerInstance, 
+    isReady,
     ]
   );
+    const handleSnapshotRequested = useCallback((data: {
+    sessionId: string;
+    requesterSocketId: string;
+  }) => {
+    if (!socket) return;
+    if(!isHost)return;
+ 
+    const store = useGitWorkspace.getState();
+ 
+    // Merge openFiles (latest content) into the file tree
+    const filesWithCurrentContent = store.files.map(f => {
+      const open = store.openFiles.find(o => o.path === f.path);
+      return open ? { ...f, content: open.content } : f;
+    });
+ 
+    const snapshot = {
+      files:         filesWithCurrentContent,
+      modifiedFiles: Array.from(store.modifiedFiles),
+      createdFiles:  Array.from(store.createdFiles),
+      deletedFiles:  Array.from(store.deletedFiles),
+      repoFullName:  store.repoFullName,
+      branch:        store.currentBranch,
+    };
+ 
+    console.log(`📸 [CollabWorkspace] Sending snapshot → ${data.requesterSocketId}`, {
+      files:    snapshot.files.length,
+      modified: snapshot.modifiedFiles.length,
+      created:  snapshot.createdFiles.length,
+      deleted:  snapshot.deletedFiles.length,
+    });
+ 
+    socket.emit("workspace:snapshot", {
+      sessionId:         data.sessionId,
+      requesterSocketId: data.requesterSocketId,
+      snapshot,
+    });
+  }, [socket,isHost]);
+  const handleSnapshotReceived = useCallback((data: {
+    sessionId: string;
+    snapshot: {
+      files:         any[];
+      modifiedFiles: string[];
+      createdFiles:  string[];
+      deletedFiles:  string[];
+      repoFullName:  string;
+      branch:        string;
+    };
+  }) => {
+    const { snapshot } = data;
+    const store = useGitWorkspace.getState();
+ 
+    console.log(`📸 [CollabWorkspace] Guest received snapshot`, {
+      files:    snapshot.files.length,
+      modified: snapshot.modifiedFiles.length,
+    });
+ 
+    // 1. Initialize file tree with host's current content
+    store.initializeWorkspace(snapshot.repoFullName, snapshot.branch, snapshot.files);
+ 
+    // 2. Replay change markers so guest matches host state exactly
+    snapshot.modifiedFiles.forEach(path => {
+  const file = snapshot.files.find((f: any) => f.path === path);
+  if (file) store.updateFileContent(path, file.content ?? "");
+});
+ 
+    snapshot.createdFiles.forEach(path => {
+      const file = snapshot.files.find((f: any) => f.path === path);
+      store.markFileCreated(path, file?.content ?? "");
+    });
+ 
+    snapshot.deletedFiles.forEach(path => {
+      store.markFileDeleted(path);
+    });
+ 
+    console.log(`✅ [CollabWorkspace] Guest workspace initialized from host snapshot`);
+  }, []);
 
 
   useEffect(() => {
     if (!socket) return;
-
+ 
     console.log("[CollabWorkspace] 🔌 Attaching workspace socket listeners");
-
-    socket.on("editor:change", handleRemoteEditorChange);
-    socket.on("file:action",   handleRemoteFileAction);
-
+ 
+    socket.on("editor:change",                handleRemoteEditorChange);
+    socket.on("file:action",                  handleRemoteFileAction);
+    socket.on("workspace:snapshot-requested", handleSnapshotRequested);
+    socket.on("workspace:snapshot",           handleSnapshotReceived);
+    // Server emits this when no host is in the room — guest falls back to GitHub
+    socket.on("workspace:snapshot-unavailable", () => {
+      console.log("[CollabWorkspace] 📸 Snapshot unavailable — guest will use GitHub fallback");
+    });
+ 
     return () => {
-      socket.off("editor:change", handleRemoteEditorChange);
-      socket.off("file:action",   handleRemoteFileAction);
+      socket.off("editor:change",                handleRemoteEditorChange);
+      socket.off("file:action",                  handleRemoteFileAction);
+      socket.off("workspace:snapshot-requested", handleSnapshotRequested);
+      socket.off("workspace:snapshot",           handleSnapshotReceived);
+      socket.off("workspace:snapshot-unavailable");
       console.log("[CollabWorkspace] 🧹 Removed workspace socket listeners");
     };
-  }, [socket, handleRemoteEditorChange, handleRemoteFileAction]);
+  }, [socket, handleRemoteEditorChange, handleRemoteFileAction, handleSnapshotRequested, handleSnapshotReceived]);
 
   const broadcastContentChange = useCallback(
     (filePath: string, sha: string, content: string) => {
@@ -294,11 +405,19 @@ export function useCollabWorkspace({
     [socket, sessionId, currentUserId]
   );
 
+  
+  const requestSnapshot = useCallback((targetSessionId: string) => {
+    if (!socket) return;
+    console.log(`📸 [CollabWorkspace] Guest requesting snapshot for ${targetSessionId}`);
+    socket.emit("workspace:request-snapshot", { sessionId: targetSessionId });
+  }, [socket]);
+
   return {
     broadcastContentChange,
     broadcastFileCreate,
     broadcastFileDelete,
     broadcastFileRename,
+    requestSnapshot
   };
 
 

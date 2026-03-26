@@ -523,6 +523,41 @@ export const useGitWorkspace = create<GitWorkspaceState>((set, get) => ({
   discardFileChanges: (path) => {
     if (get().isSwitchingBranch) return;
     set((state) => updateActiveBranch(state, (ws) => {
+
+      if (ws.deletedFiles.has(path)) {
+      const originalContent = ws.remoteState.get(path) ?? '';
+      const originalFile = state.files.find(f => f.path === path) ?? 
+        // files was already removed from tree, reconstruct from remoteState
+        { name: path.split('/').pop() ?? path, path, sha: '', size: originalContent.length, type: 'file' as const, content: originalContent };
+
+      const newDeleted = new Set(ws.deletedFiles);
+      newDeleted.delete(path);
+
+      // Re-add to file tree
+      const alreadyInTree = ws.files.some(f => f.path === path);
+      const newFiles = alreadyInTree ? ws.files : [...ws.files, originalFile];
+
+      return {
+        ...ws,
+        deletedFiles: newDeleted,
+        files: newFiles,
+      };
+    }
+    if (ws.createdFiles.has(path)) {
+      const newCreated = new Set(ws.createdFiles);
+      newCreated.delete(path);
+
+      return {
+        ...ws,
+        createdFiles: newCreated,
+        files: ws.files.filter(f => f.path !== path),
+        openFiles: ws.openFiles.filter(f => f.path !== path),
+        activeFilePath: ws.activeFilePath === path
+          ? (ws.openFiles.filter(f => f.path !== path).at(-1)?.path ?? null)
+          : ws.activeFilePath,
+      };
+    }
+
       const originalContent = ws.remoteState.get(path);
       if (!originalContent) {
         toast.error('Cannot restore: original content not found');
