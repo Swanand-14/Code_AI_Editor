@@ -115,7 +115,7 @@ export function GitHubCollabPlayground({ session }: GitHubCollabPlaygroundProps)
   );
   const [showDiff, setShowDiff] = useState(false);
   const [diffFilePath, setDiffFilePath] = useState<string | null>(null);
-  const [showPreview, setShowPreview] = useState(false);
+  const [showPreview, setShowPreview] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingTree, setIsLoadingTree] = useState(false);
 

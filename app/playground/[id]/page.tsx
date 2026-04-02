@@ -56,7 +56,7 @@ import { fileCreationWatcher } from "@/modules/webContainers/services/fileWatche
 
 function MainPlaygroundPage() {
   const { id } = useParams<{ id: string }>();
-  const [isPreviewVisible, setIsPreviewVisible] = useState(false);
+  const [isPreviewVisible, setIsPreviewVisible] = useState(true);
   const [createRepoDialogOpen, setCreateRepoDialogOpen] = useState(false);
   const [manualServerUrl, setManualServerUrl] = useState<string | null>(null);
   const [terminalServerUrl, setTerminalServerUrl] = React.useState<string | null>(null);
@@ -387,6 +387,7 @@ useEffect(() => {
       const filePath = parentPath
       ? `${parentPath}/${newFile.filename}.${newFile.fileExtension}`
       : `${newFile.filename}.${newFile.fileExtension}`;
+      
     
     manuallyCreatedFilesRef.current.add(filePath);
     
