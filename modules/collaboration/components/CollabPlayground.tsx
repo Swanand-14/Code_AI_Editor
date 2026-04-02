@@ -58,7 +58,7 @@ const manuallyCreatedFilesRef = useRef<Set<string>>(new Set());
   const autoStartAttempted = useRef(false);
   
   // 🔥 NEW: Preview toggle state
-  const [showPreview, setShowPreview] = useState(false);
+  const [showPreview, setShowPreview] = useState(true);
   
   // 🔥 NEW: Terminal ref for WebContainer
   const terminalRef = useRef<TerminalRef>(null);

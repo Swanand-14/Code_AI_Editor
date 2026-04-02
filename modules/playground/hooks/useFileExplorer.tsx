@@ -156,6 +156,17 @@ export default function Error({
   // Default: comment with filename
   return `// ${filename}.${extension}\n`;
 }
+
+function findFolderByPath(root: TemplateFolder, pathParts: string[]): TemplateFolder {
+  let current = root;
+  for (const part of pathParts) {
+    const next = current.items.find(
+      (item) => "folderName" in item && item.folderName === part
+    ) as TemplateFolder | undefined;
+    if (next) current = next;
+  }
+  return current;
+}
 // @ts-ignore
 export const useFileExplorer = create<FileExplorerState>((set,get)=>({
     playgroundId:"",
@@ -264,8 +275,26 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
     const filePath = parentPath
       ? `${parentPath}/${newFile.filename}.${newFile.fileExtension}`
       : `${newFile.filename}.${newFile.fileExtension}`;
+
+      const targetFolder = findFolderByPath(
+      JSON.parse(JSON.stringify(templateData)) as TemplateFolder,
+      parentPath.split("/").filter(Boolean)
+    );
+    const duplicate = targetFolder.items.find(
+      (item) =>
+        "filename" in item &&
+        item.filename === newFile.filename &&
+        item.fileExtension === newFile.fileExtension
+    );
+    if (duplicate) {
+      toast.error(
+        `"${newFile.filename}.${newFile.fileExtension}" already exists in this directory`
+      );
+      return;
+    }
     
     console.log(`🆕 Creating new file: ${filePath}`);
+
 
     // 🔥 FIX: Use smart default content if file is empty
     const fileContent = newFile.content || getDefaultFileContent(
@@ -299,6 +328,7 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
     const updatedTemplateData = JSON.parse(JSON.stringify(templateData)) as TemplateFolder;
     const pathParts = parentPath.split("/").filter(Boolean);
     let currentFolder = updatedTemplateData;
+   
 
     for (const part of pathParts) {
       const nextFolder = currentFolder.items.find(
@@ -613,8 +643,31 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
         const newPath = parentPath
           ? `${parentPath}/${newFilename}.${newExtension}`
           : `${newFilename}.${newExtension}`;
+
+           const targetFolder = findFolderByPath(
+        JSON.parse(JSON.stringify(templateData)) as TemplateFolder,
+        parentPath.split("/").filter(Boolean)
+      );
+      const duplicate = targetFolder.items.find(
+        (item) =>
+          "filename" in item &&
+          item.filename === newFilename &&
+          item.fileExtension === newExtension &&
+          // Exclude the file being renamed itself
+          !(item.filename === file.filename && item.fileExtension === file.fileExtension)
+      );
+      if (duplicate) {
+        toast.error(
+          `"${newFilename}.${newExtension}" already exists in this directory`
+        );
+        return;
+      }
         
         console.log(`✏️ Renaming file in WebContainer: ${oldPath} → ${newPath}`);
+         const updatedTemplateData = JSON.parse(JSON.stringify(templateData)) as TemplateFolder;
+      const pathParts = parentPath.split("/");
+      let currentFolder = updatedTemplateData;
+      
         
         if (instance && instance.fs) {
           try {
@@ -623,15 +676,20 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
             // Write to new path
             await instance.fs.writeFile(newPath, content, 'utf-8');
             // Delete old file
+            try {
+            await instance.fs.rm(oldPath, { force: true });
+            console.log(`✅ Old file deleted from WebContainer: ${oldPath}`);
+          } catch (rmError) {
+            // Fallback: try without options
+            console.warn(`⚠️ rm with options failed, trying plain rm:`, rmError);
             await instance.fs.rm(oldPath);
+          }
             console.log(`✅ File renamed in WebContainer`);
           } catch (error) {
             console.warn(`⚠️ Error renaming file in WebContainer:`, error);
           }
         }
-      const updatedTemplateData = JSON.parse(JSON.stringify(templateData)) as TemplateFolder;
-      const pathParts = parentPath.split("/");
-      let currentFolder = updatedTemplateData;
+     
 
       for (const part of pathParts) {
         if (part) {

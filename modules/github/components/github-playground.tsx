@@ -76,7 +76,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
   const [folderToDelete, setFolderToDelete] = useState<{ path: string; name: string } | null>(null)
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([""]))
   const [showDiff, setShowDiff] = useState(false)
-  const [showPreview, setShowPreview] = useState(false)
+  const [showPreview, setShowPreview] = useState(true)
   const terminalRef = useRef<TerminalRef>(null)
   const [isTerminalReady, setIsTerminalReady] = useState(false)
   const autoStartAttempted = useRef(false)

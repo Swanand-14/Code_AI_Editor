@@ -45,7 +45,6 @@ export const WebContainerPreview = ({
   const [currentUrl, setCurrentUrl] = useState<string>("");
   const [addressBarInput, setAddressBarInput] = useState<string>("");
   const healthCheckInterval = useRef<NodeJS.Timeout>();
-  const fileChangeDebounceRef = useRef<NodeJS.Timeout>();
   const healthCheckAttempts = useRef(0);
   const [terminalServerUrl, setTerminalServerUrl] = useState<string | null>(null);
 
@@ -116,30 +115,20 @@ export const WebContainerPreview = ({
     };
   }, [serverUrl]);
 
-  // Auto-refresh preview when files change
+  // File change listener - log for debugging, let HMR handle updates
   useEffect(() => {
     if (!isPreviewReady || !iframeRef.current) return;
 
     const handleFileChange = (event: CustomEvent) => {
-      console.log("📝 File changed event received, debouncing refresh...", event.detail);
-      
-      if (fileChangeDebounceRef.current) {
-        clearTimeout(fileChangeDebounceRef.current);
-      }
-      
-      fileChangeDebounceRef.current = setTimeout(() => {
-        console.log("🔄 Auto-refreshing preview due to file change...");
-        handleForceRefresh();
-      }, 1000);
+      console.log("📝 File changed:", event.detail?.path, "- HMR will handle the update");
+      // Allow the server's HMR (Hot Module Replacement) to handle updates
+      // No manual refresh needed - the dev server will push updates to the iframe
     };
 
     window.addEventListener("webcontainerFileChange", handleFileChange as EventListener);
 
     return () => {
       window.removeEventListener("webcontainerFileChange", handleFileChange as EventListener);
-      if (fileChangeDebounceRef.current) {
-        clearTimeout(fileChangeDebounceRef.current);
-      }
     };
   }, [isPreviewReady]);
 
