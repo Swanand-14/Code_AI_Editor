@@ -40,6 +40,9 @@ import { useCollabParticipants } from "../hooks/useCollabParticipants";
 import { ParticipantsPanel } from "./ParticipantsPanel";
 import { getEditorLanguage } from "@/modules/playground/lib/editor-config";
 import { fileCreationWatcher } from "@/modules/webContainers/services/fileWatcher";
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
+import { Separator } from "@/components/ui/separator";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 
 interface CollabPlaygroundProps {
   session: CollabSessionData;
@@ -53,6 +56,7 @@ export function CollabPlayground({ session }: CollabPlaygroundProps) {
   const [localCursorPosition,setLocalCursorPosition] = useState<{lineNumber:number;column:number}>({lineNumber:1,column:1});
   const [followingUserId, setFollowingUserId] = useState<string | null>(null);
   const [isReadyTerminal, setIsReadyTerminal] = useState(false);
+  const [isParticipantsVisible, setIsParticipantsVisible] = useState(true);
 const editorInstanceRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 const manuallyCreatedFilesRef = useRef<Set<string>>(new Set());
   const autoStartAttempted = useRef(false);
@@ -1211,187 +1215,194 @@ useEffect(() => {
 
   
   const hasUnsavedChanges = Array.isArray(openFiles) ? openFiles.some((f) => f.hasUnsavedChanges) : false;
-
   return (
+  <SidebarProvider>
     <TooltipProvider>
-      <SidebarProvider>
-        <div className="flex h-screen w-full bg-background">
-          {/* 🔥 NEW: Host Offline Banner (for guests) */}
-          {!isHost && (
-            <HostOfflineBanner
-              socket={socket}
-              sessionId={session.sessionId}
-              isHost={isHost}
-            />
-          )}
+      <div className="flex h-screen w-full bg-background">
+        
+        {!isHost && (
+          <HostOfflineBanner
+            socket={socket}
+            sessionId={session.sessionId}
+            isHost={isHost}
+          />
+        )}
 
-          {templateData && (
-            <TemplateFileTree
-              data={templateData}
-              onFileSelect={handleFileSelect}
-              selectedFile={activeFile}
-              title="Files (Collab)"
-              onAddFile={wrappedHandleAddFile}
-              onAddFolder={wrappedHandleAddFolder}
-              onDeleteFile={wrappedHandleDeleteFile}
-              onDeleteFolder={wrappedHandleDeleteFolder}
-              onRenameFile={wrappedHandleRenameFile}
-              onRenameFolder={wrappedHandleRenameFolder}
-            />
-          )}
+        {templateData && (
+          <TemplateFileTree
+            data={templateData}
+            onFileSelect={handleFileSelect}
+            selectedFile={activeFile}
+            title="Files (Collab)"
+            onAddFile={wrappedHandleAddFile}
+            onAddFolder={wrappedHandleAddFolder}
+            onDeleteFile={wrappedHandleDeleteFile}
+            onDeleteFolder={wrappedHandleDeleteFolder}
+            onRenameFile={wrappedHandleRenameFile}
+            onRenameFolder={wrappedHandleRenameFolder}
+          />
+        )}
 
+        <SidebarInset className="flex flex-1 flex-col min-w-0">
+        
+        <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border px-4">
+          <SidebarTrigger className="-ml-1" />
+          <Separator orientation="vertical" className="mr-2 h-4" />
+          
+          <div className="flex flex-1 items-center gap-4">
+            <div className="flex items-center gap-3">
+              <Users className="h-5 w-5 text-primary" />
+              <div>
+                <h1 className="font-semibold">Collaboration Session</h1>
+                <p className="text-xs text-muted-foreground">
+                  {openFiles.length} file{openFiles.length !== 1 ? "s" : ""} open
+                  {hasUnsavedChanges && " • Unsaved changes"}
+                </p>
+              </div>
+            </div>
 
-
-          <div className="flex flex-1 flex-col">
-            <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border px-4">
-              <div className="flex flex-1 items-center gap-4">
-                <div className="flex items-center gap-3">
-                  <Users className="h-5 w-5 text-primary" />
-                  <div>
-                    <h1 className="font-semibold">Collaboration Session</h1>
-                    <p className="text-xs text-muted-foreground">
-                      {openFiles.length} file{openFiles.length !== 1 ? "s" : ""} open
-                      {hasUnsavedChanges && " • Unsaved changes"}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="ml-auto flex items-center gap-4">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={handleSave}
-                        disabled={!activeFile?.hasUnsavedChanges || isSaving}
-                        aria-label="Save current file"
-                      >
-                        <Save className="h-4 w-4" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Save (Ctrl+S)</TooltipContent>
-                  </Tooltip>
-
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={handleSaveAll}
-                        disabled={!hasUnsavedChanges || isSaving}
-                        aria-label="Save all files"
-                      >
-                        <Save className="h-4 w-4" />
-                        <span className="ml-1 text-xs">All</span>
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Save All (Ctrl+Shift+S)</TooltipContent>
-                  </Tooltip>
-
-                  {/* 🔥 NEW: Preview Toggle Button */}
+            <div className="ml-auto flex items-center gap-4">
+              <Tooltip>
+                <TooltipTrigger asChild>
                   <Button
                     size="sm"
-                    variant={showPreview ? "default" : "outline"}
-                    onClick={() => setShowPreview(!showPreview)}
+                    variant="outline"
+                    onClick={handleSave}
+                    disabled={!activeFile?.hasUnsavedChanges || isSaving}
+                    aria-label="Save current file"
                   >
-                    {showPreview ? "Hide Preview" : "Show Preview"}
+                    <Save className="h-4 w-4" />
                   </Button>
+                </TooltipTrigger>
+                <TooltipContent>Save (Ctrl+S)</TooltipContent>
+              </Tooltip>
 
-                  {/* 🔥 NEW: WebContainer Controls (Host Only) */}
-                  {isHost && (
-                    <div className="flex items-center gap-2 border-l pl-4">
-                      {!webContainer.isServerRunning ? (
-                        <Button
-                          size="sm"
-                          onClick={webContainer.startServer}
-                          disabled={webContainer.isLoading}
-                        >
-                          <Play className="h-4 w-4 mr-1" />
-                          Start Server
-                        </Button>
-                      ) : (
-                        <>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={webContainer.stopServer}
-                          >
-                            <Square className="h-4 w-4 mr-1" />
-                            Stop
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={webContainer.restartServer}
-                          >
-                            <RotateCcw className="h-4 w-4 mr-1" />
-                            Restart
-                          </Button>
-                        </>
-                      )}
-                      
-                      {/* 🔥 WebContainer Status Badge */}
-                      {webContainer.isLoading && (
-                        <span className="text-xs text-muted-foreground">Loading...</span>
-                      )}
-                      {webContainer.serverUrl && (
-                        <span className="text-xs text-green-600">● Live</span>
-                      )}
-                    </div>
-                  )}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleSaveAll}
+                    disabled={!hasUnsavedChanges || isSaving}
+                    aria-label="Save all files"
+                  >
+                    <Save className="h-4 w-4" />
+                    <span className="ml-1 text-xs">All</span>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Save All (Ctrl+Shift+S)</TooltipContent>
+              </Tooltip>
 
-                  <div className="flex items-center gap-2">
-                    {isConnected ? (
-                      <>
-                        <Wifi className="h-4 w-4 text-green-500" />
-                        <span className="text-sm text-green-600">Connected</span>
-                      </>
-                    ) : (
-                      <>
-                        <WifiOff className="h-4 w-4 text-red-500" />
-                        <span className="text-sm text-red-600">Disconnected</span>
-                      </>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant={isParticipantsVisible ? "default" : "outline"}
+                    onClick={() => setIsParticipantsVisible(v => !v)}
+                    aria-label="Toggle participants panel"
+                  >
                     <Users className="h-4 w-4" />
-                    <span className="text-sm">{participants.length} online</span>
-                  </div>
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Toggle participants</TooltipContent>
+              </Tooltip>
 
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Clock className="h-4 w-4" />
-                    <span className="text-sm">Expires in {hoursRemaining}h</span>
-                  </div>
-                </div>
-              </div>
-            </header>
+              <Button
+                size="sm"
+                variant={showPreview ? "default" : "outline"}
+                onClick={() => setShowPreview(!showPreview)}
+              >
+                {showPreview ? "Hide Preview" : "Show Preview"}
+              </Button>
 
-            {participants.length > 0 && (
-              <div className="border-b bg-muted/10 px-4 py-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  {participants.map((participant, index) => (
-                    <div
-                      key={`${participant.userId}-${index}`}
-                      className="flex items-center gap-1 px-2 py-1 bg-background rounded text-sm border"
+              {isHost && (
+                <div className="flex items-center gap-2 border-l pl-4">
+                  {!webContainer.isServerRunning ? (
+                    <Button
+                      size="sm"
+                      onClick={webContainer.startServer}
+                      disabled={webContainer.isLoading}
                     >
-                      <div className="h-2 w-2 rounded-full bg-green-500" />
-                      <span>{participant.userName}</span>
-                      <span className="text-xs text-muted-foreground">
-                        ({participant.role})
-                      </span>
-                    </div>
-                  ))}
+                      <Play className="h-4 w-4 mr-1" />
+                      Start Server
+                    </Button>
+                  ) : (
+                    <>
+                      <Button size="sm" variant="outline" onClick={webContainer.stopServer}>
+                        <Square className="h-4 w-4 mr-1" />
+                        Stop
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={webContainer.restartServer}>
+                        <RotateCcw className="h-4 w-4 mr-1" />
+                        Restart
+                      </Button>
+                    </>
+                  )}
+                  {webContainer.isLoading && (
+                    <span className="text-xs text-muted-foreground">Loading...</span>
+                  )}
+                  {webContainer.serverUrl && (
+                    <span className="text-xs text-green-600">● Live</span>
+                  )}
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* 🔥 NEW: Split Layout - Editor + Preview */}
-            {showPreview ? (
-              <div className="flex flex-1 overflow-hidden">
-                {/* Left: Editor */}
-                <div className="flex flex-col w-1/2 border-r">
-                  {/* File Tabs */}
+              <div className="flex items-center gap-2">
+                {isConnected ? (
+                  <>
+                    <Wifi className="h-4 w-4 text-green-500" />
+                    <span className="text-sm text-green-600">Connected</span>
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="h-4 w-4 text-red-500" />
+                    <span className="text-sm text-red-600">Disconnected</span>
+                  </>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                <span className="text-sm">{participants.length} online</span>
+              </div>
+
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Clock className="h-4 w-4" />
+                <span className="text-sm">Expires in {hoursRemaining}h</span>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {participants.length > 0 && (
+          <div className="border-b bg-muted/10 px-4 py-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {participants.map((participant, index) => (
+                <div
+                  key={`${participant.userId}-${index}`}
+                  className="flex items-center gap-1 px-2 py-1 bg-background rounded text-sm border"
+                >
+                  <div className="h-2 w-2 rounded-full bg-green-500" />
+                  <span>{participant.userName}</span>
+                  <span className="text-xs text-muted-foreground">
+                    ({participant.role})
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Main content area: editor + optional preview ── */}
+        <div className="flex flex-1 overflow-hidden">
+
+          {showPreview ? (
+            <ResizablePanelGroup direction="horizontal" className="flex-1">
+              
+              <ResizablePanel defaultSize={50} minSize={20}>
+                <div className="flex flex-col h-full">
+                  
+                  {/* File tabs */}
                   {openFiles.length > 0 && (
                     <div className="border-b border-border bg-muted/30">
                       <div className="flex items-center justify-between px-4 py-2">
@@ -1407,7 +1418,6 @@ useEffect(() => {
                               isDuplicate && file.path
                                 ? `${file.path}/${file.filename}.${file.fileExtension}`
                                 : `${file.filename}.${file.fileExtension}`;
-
                             return (
                               <div
                                 key={file.id}
@@ -1453,162 +1463,179 @@ useEffect(() => {
                   {/* Editor */}
                   <div className="flex-1 overflow-hidden">
                     {activeFile ? (
-  <CollabEditor
-    sessionId={session.sessionId}
-    userId={user?.id}
-    userName={user?.name || "Anonymous"}
-    fileId={activeFile.id}
-    filePath={(() => {
-      // 🔥 FIX: Build correct filePath
-      const basePath = activeFile.path || "";
-      const fileName = `${activeFile.filename}.${activeFile.fileExtension}`;
-      const fullPath = basePath ? `${basePath}/${fileName}` : fileName;
-      return fullPath.replace(/^\//, ""); // Remove leading slash
-    })()}
-    initialContent={
-      typeof activeFile.content === "string" ? activeFile.content : ""
-    }
-    language={getEditorLanguage(activeFile.fileExtension || "")}
-    onContentChange={(content) =>
-      handleFileContentChange(activeFile.id, content)
-    } remoteCursors={CursorsInCurrentFile}
-    onCursorPositionChange={setLocalCursorPosition}
-    onEditorReady={(editor) => { editorInstanceRef.current = editor; }}
-  />
-) : (
-  <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-    No files open. Select a file from the sidebar.
-  </div>
-)}
+                      <CollabEditor
+                        sessionId={session.sessionId}
+                        userId={user?.id}
+                        userName={user?.name || "Anonymous"}
+                        fileId={activeFile.id}
+                        filePath={(() => {
+                          const basePath = activeFile.path || "";
+                          const fileName = `${activeFile.filename}.${activeFile.fileExtension}`;
+                          const fullPath = basePath ? `${basePath}/${fileName}` : fileName;
+                          return fullPath.replace(/^\//, "");
+                        })()}
+                        initialContent={
+                          typeof activeFile.content === "string" ? activeFile.content : ""
+                        }
+                        language={getEditorLanguage(activeFile.fileExtension || "")}
+                        onContentChange={(content) =>
+                          handleFileContentChange(activeFile.id, content)
+                        }
+                        remoteCursors={CursorsInCurrentFile}
+                        onCursorPositionChange={setLocalCursorPosition}
+                        onEditorReady={(editor) => { editorInstanceRef.current = editor; }}
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                        No files open. Select a file from the sidebar.
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+              </ResizablePanel>
+
+              <ResizableHandle />
+
+              <ResizablePanel defaultSize={50} minSize={20}>
+                <WebContainerPreview
+                  serverUrl={webContainer.serverUrl}
+                  isLoading={webContainer.isLoading}
+                  error={webContainer.error}
+                  instance={isHost ? webContainer.instance : null}
+                  onRestartServer={isHost ? webContainer.restartServer : undefined}
+                  terminalRef={isHost ? terminalRef : undefined}
+                  showTerminal={isHost}
+                />
+              </ResizablePanel>
+
+            </ResizablePanelGroup>
+          ) : (
+            /* Full-width editor, no preview */
+            <div className="flex flex-col flex-1 overflow-hidden">
+              
+              {openFiles.length > 0 && (
+                <div className="border-b border-border bg-muted/30">
+                  <div className="flex items-center justify-between px-4 py-2">
+                    <div className="flex items-center gap-1 overflow-x-auto">
+                      {openFiles.map((file) => {
+                        const isDuplicate = openFiles.some(
+                          (f) =>
+                            f.filename === file.filename &&
+                            f.fileExtension === file.fileExtension &&
+                            f.id !== file.id
+                        );
+                        const displayName =
+                          isDuplicate && file.path
+                            ? `${file.path}/${file.filename}.${file.fileExtension}`
+                            : `${file.filename}.${file.fileExtension}`;
+                        return (
+                          <div
+                            key={file.id}
+                            onClick={() => setActiveFileId(file.id)}
+                            className={`flex items-center gap-2 px-3 py-1 rounded-t-md cursor-pointer border-b-2 transition-all ${
+                              activeFileId === file.id
+                                ? "border-primary bg-background"
+                                : "border-transparent hover:bg-muted"
+                            }`}
+                          >
+                            <FileText className="h-3 w-3" />
+                            <span className="text-sm" title={displayName}>
+                              {displayName}
+                            </span>
+                            {file.hasUnsavedChanges && (
+                              <span className="h-2 w-2 rounded-full bg-orange-500" />
+                            )}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                closeFile(file.id);
+                              }}
+                              className="ml-1 hover:bg-destructive hover:text-white rounded p-0.5"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {openFiles.length > 1 && (
+                      <button
+                        onClick={closeAllFiles}
+                        className="text-xs text-muted-foreground hover:text-foreground"
+                      >
+                        Close All
+                      </button>
+                    )}
                   </div>
                 </div>
+              )}
 
-                {/* Right: WebContainer Preview */}
-                <div className="w-1/2">
-                  <WebContainerPreview
-    serverUrl={webContainer.serverUrl}
-    isLoading={webContainer.isLoading}
-    error={webContainer.error}
-    instance={isHost ? webContainer.instance : null}
-    onRestartServer={isHost ? webContainer.restartServer : undefined}
-    terminalRef={isHost ? terminalRef : undefined}
-    showTerminal={isHost} // 🔥 ADD THIS LINE
-  />
-                </div>
-              </div>
-            ) : (
-              /* Original Full-Width Editor (no preview) */
-              <>
-                {openFiles.length > 0 && (
-                  <div className="border-b border-border bg-muted/30">
-                    <div className="flex items-center justify-between px-4 py-2">
-                      <div className="flex items-center gap-1 overflow-x-auto">
-                        {openFiles.map((file) => {
-                          const isDuplicate = openFiles.some(
-                            (f) =>
-                              f.filename === file.filename &&
-                              f.fileExtension === file.fileExtension &&
-                              f.id !== file.id
-                          );
-                          const displayName =
-                            isDuplicate && file.path
-                              ? `${file.path}/${file.filename}.${file.fileExtension}`
-                              : `${file.filename}.${file.fileExtension}`;
-
-                          return (
-                            <div
-                              key={file.id}
-                              onClick={() => setActiveFileId(file.id)}
-                              className={`flex items-center gap-2 px-3 py-1 rounded-t-md cursor-pointer border-b-2 transition-all ${
-                                activeFileId === file.id
-                                  ? "border-primary bg-background"
-                                  : "border-transparent hover:bg-muted"
-                              }`}
-                            >
-                              <FileText className="h-3 w-3" />
-                              <span className="text-sm" title={displayName}>
-                                {displayName}
-                              </span>
-                              {file.hasUnsavedChanges && (
-                                <span className="h-2 w-2 rounded-full bg-orange-500" />
-                              )}
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  closeFile(file.id);
-                                }}
-                                className="ml-1 hover:bg-destructive hover:text-white rounded p-0.5"
-                              >
-                                <X className="h-3 w-3" />
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {openFiles.length > 1 && (
-                        <button
-                          onClick={closeAllFiles}
-                          className="text-xs text-muted-foreground hover:text-foreground"
-                        >
-                          Close All
-                        </button>
-                      )}
-                    </div>
+              <div className="flex-1 overflow-hidden">
+                {activeFile ? (
+                  <CollabEditor
+                    sessionId={session.sessionId}
+                    userId={user?.id}
+                    userName={user?.name || "Anonymous"}
+                    fileId={activeFile.id}
+                    filePath={(() => {
+                      const basePath = activeFile.path || "";
+                      const fileName = `${activeFile.filename}.${activeFile.fileExtension}`;
+                      const fullPath = basePath ? `${basePath}/${fileName}` : fileName;
+                      return fullPath.replace(/^\//, "");
+                    })()}
+                    initialContent={
+                      typeof activeFile.content === "string" ? activeFile.content : ""
+                    }
+                    language={getEditorLanguage(activeFile.fileExtension || "")}
+                    onContentChange={(content) =>
+                      handleFileContentChange(activeFile.id, content)
+                    }
+                    remoteCursors={CursorsInCurrentFile}
+                    onCursorPositionChange={setLocalCursorPosition}
+                    onEditorReady={(editor) => { editorInstanceRef.current = editor; }}
+                  />
+                ) : (
+                  <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+                    {templateData
+                      ? "No files open. Select a file from the sidebar."
+                      : "Loading template..."}
                   </div>
                 )}
+              </div>
 
-                <div className="flex-1 overflow-hidden">
-                  {activeFile ? (
-  <CollabEditor
-    sessionId={session.sessionId}
-    userId={user?.id}
-    userName={user?.name || "Anonymous"}
-    fileId={activeFile.id}
-    filePath={(() => {
-      // 🔥 FIX: Build correct filePath
-      const basePath = activeFile.path || "";
-      const fileName = `${activeFile.filename}.${activeFile.fileExtension}`;
-      const fullPath = basePath ? `${basePath}/${fileName}` : fileName;
-      return fullPath.replace(/^\//, ""); // Remove leading slash
-    })()}
-    initialContent={
-      typeof activeFile.content === "string" ? activeFile.content : ""
-    }
-    language={getEditorLanguage(activeFile.fileExtension || "")}
-    onContentChange={(content) =>
-      handleFileContentChange(activeFile.id, content)
-    } remoteCursors={CursorsInCurrentFile} onCursorPositionChange={setLocalCursorPosition}
-    onEditorReady={(editor) => { editorInstanceRef.current = editor; }}
-  />
-) : (
-  <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-    {templateData
-      ? "No files open. Select a file from the sidebar."
-      : "Loading template..."}
-  </div>
-)}
-                </div>
-              </>
-            )}
-          </div>
+            </div>
+          )}
 
-           <ParticipantsPanel
-         participants={participants.map(p => {
-    const cursor = remoteCursors.get(p.userId);
-    return cursor ? { 
-      ...p, 
-      cursor: { fileId: cursor.fileId, position: cursor.position },
-      activeFile: cursor.filePath 
-    } : p;
-  })}
-          activityLogs={activityLogs}
-          currentUserId={user?.id}
+          {/* Participants panel — togglable, sits INSIDE the content flex row */}
+          {isParticipantsVisible && (
+            <ParticipantsPanel
+              participants={participants.map(p => {
+                const cursor = remoteCursors.get(p.userId);
+                return cursor
+                  ? {
+                      ...p,
+                      cursor: { fileId: cursor.fileId, position: cursor.position },
+                      activeFile: cursor.filePath,
+                    }
+                  : p;
+              })}
+              activityLogs={activityLogs}
+              currentUserId={user?.id}
+              followingUserId={followingUserId}
+              onFollowToggle={toggleFollow}
+            />
+          )}
 
-          followingUserId={followingUserId} // 🔥 NEW
-  onFollowToggle={toggleFollow}     // 🔥 NEW
-        />
         </div>
-      </SidebarProvider>
+        {/* ── end main content area ── */}
+
+      </SidebarInset>
+
+      </div>
     </TooltipProvider>
-  );
+  </SidebarProvider>
+);
+
+  
 }
