@@ -39,11 +39,8 @@
   
 // })
 import NextAuth from "next-auth"
-import { PrismaAdapter } from '@auth/prisma-adapter'
-import { prisma } from "./lib/db"
 import authConfig from "./auth.config"
 import { getUserById } from "./modules/auth/actions"
-
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   callbacks: {
@@ -55,14 +52,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async jwt({ token }) {
       if (!token.sub) return token
       
-      const existingUser = await getUserById(token.sub)
-      if (!existingUser) {
-        return token
+      try {
+        const existingUser = await getUserById(token.sub)
+        if (!existingUser) {
+          return token
+        }
+        
+        token.name = existingUser.name
+        token.email = existingUser.email
+        token.role = existingUser.role
+      } catch (error) {
+        console.error("Error fetching user in JWT callback:", error)
+        // Continue with token as-is if database fetch fails
       }
       
-      token.name = existingUser.name
-      token.email = existingUser.email
-      token.role = existingUser.role
       return token
     },
     
@@ -77,9 +80,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     }
   },
   secret: process.env.AUTH_SECRET,
-  adapter: PrismaAdapter(prisma),
   session: {
-    strategy: "jwt" // Use JWT strategy for better compatibility
+    strategy: "jwt",
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   ...authConfig
 })
