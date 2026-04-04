@@ -1,5 +1,5 @@
 import { NextRequest,NextResponse } from "next/server";
-import { prisma } from "@/lib/db";
+
 
 interface ChatMessage{
     role: string;
@@ -123,7 +123,7 @@ export async function POST(req: NextRequest){
             tokens: aiResponse.length // Approximate token count
         })
         
-    } catch (error: any) {
+    } catch (error:unknown) {
         console.error("Chat API error", error);
         return NextResponse.json(
             {
