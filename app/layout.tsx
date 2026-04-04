@@ -17,8 +17,11 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "VibeCode Editor",
-  description: "Modern code editor with beautiful UI components",
+  title: {
+    template: "CodeForge — %s",
+    default: "CodeForge — Forge Code Together",
+  },
+  description: "A full-stack in-browser IDE for developers. Build, collaborate, and deploy in real-time.",
 };
 
 export default async function RootLayout({
@@ -27,26 +30,21 @@ export default async function RootLayout({
   children: React.ReactNode;
 }>) {
   const session = await auth();
-  
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#060910]`}
       >
         <SessionProvider session={session}>
           <ThemeProvider
             attribute="class"
-            defaultTheme="system"
+            defaultTheme="dark"
             enableSystem
             disableTransitionOnChange
           >
-          <div className="flex flex-col min-h-screen">
-            <Toaster/>
-            <div className="flex-1">
-              {children}
-            </div>
-          </div>
-            
+            {children}
+            <Toaster />
           </ThemeProvider>
         </SessionProvider>
       </body>
