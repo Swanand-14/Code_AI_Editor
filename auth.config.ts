@@ -17,4 +17,9 @@ export default {
       allowDangerousEmailAccountLinking: true,
     }),
   ],
+  pages: {
+    signIn: "/auth/sign-in",
+    error: "/auth/error",
+  },
+  trustHost: true,
 } satisfies NextAuthConfig
