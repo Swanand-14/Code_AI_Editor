@@ -43,6 +43,7 @@ import { PrismaAdapter } from '@auth/prisma-adapter'
 import { prisma } from "./lib/db"
 import authConfig from "./auth.config"
 import { getUserById } from "./modules/auth/actions"
+export const runtime = 'nodejs' 
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   callbacks: {
