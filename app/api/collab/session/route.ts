@@ -1,3 +1,4 @@
+export const dynamic = 'force-dynamic';
 import { NextRequest, NextResponse } from "next/server";
 import { createCollabSession } from "@/modules/collaboration/actions";
 import { buildCollabUrl } from "@/modules/collaboration/lib/utils";
