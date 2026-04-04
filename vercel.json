@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "app/api/auth/[...nextauth]/route.ts": {
+      "runtime": "nodejs20.x"
+    }
+  }
+}
