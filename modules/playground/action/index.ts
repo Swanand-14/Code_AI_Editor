@@ -16,7 +16,7 @@ export const getPlaygroundById = async(id: string) => {
             },
             include: {
                 templateFiles: true,  // ✅ Add this
-                user: true,           // Optional: if you need user data
+                //user: true,           // Optional: if you need user data
                 Starmark: true,       // Optional: if you need starmark data
             }
         })
