@@ -64,12 +64,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       } catch (error) {
         console.error("Error fetching user in JWT callback:", error)
         // Continue with token as-is if database fetch fails
+
       }
       
       return token
     },
     
     async session({ session, token }) {
+      console.log("Session callback - token:", JSON.stringify(token))
       if (token.sub && session.user) {
         session.user.id = token.sub
       }
