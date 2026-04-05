@@ -1,0 +1,6 @@
+{
+  "watch": ["index.js", "pages", "static"],
+  "ext": "js,json,html",
+  "ignore": ["node_modules"],
+  "delay": 500
+}
