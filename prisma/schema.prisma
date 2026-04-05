@@ -18,7 +18,7 @@ enum UserRole {
 
 model Account {
   id                String  @id @default(auto()) @map("_id") @db.ObjectId
-  userId            String  @map("user_id") @db.ObjectId
+  userId            String  @map("user_id") 
   type              String
   provider          String
   providerAccountId String
@@ -38,7 +38,7 @@ model Account {
 
 model GitHubRepository {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
-  userId      String   @db.ObjectId
+  userId      String   
   repoId      Int      @unique
   
   repoFullName    String
@@ -56,7 +56,7 @@ model GitHubRepository {
 model Session {
   id           String   @id @default(auto()) @map("_id") @db.ObjectId
   sessionToken String   @unique
-  userId       String   @db.ObjectId
+  userId       String   
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -64,7 +64,7 @@ model Session {
 }
 
 model User {
-  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  id            String    @id  @map("_id") 
   name          String?
   email         String    @unique
   emailVerified DateTime?
@@ -107,7 +107,7 @@ model playground {
   updatedAt DateTime @updatedAt
   Starmark StarMark[]
 
-  userId String @db.ObjectId
+  userId String 
   templateFiles TemplateFile[]
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -117,7 +117,7 @@ model playground {
 
 model StarMark {
   id String @id @default(cuid()) @map("_id")
-  userId String @db.ObjectId
+  userId String 
   playgroundId String @db.ObjectId
   isMarked Boolean 
   createdAt DateTime @default(now())
@@ -139,7 +139,7 @@ model TemplateFile {
 
 model ChatMessage {
   id String @id @default(cuid()) @map("_id")
-  UserId String @db.ObjectId
+  UserId String 
   role String
   content String
   createdAt DateTime @default(now())
@@ -161,7 +161,7 @@ model CollabSession {
   repoName String?
   branch String?
 
-  hostId String? @db.ObjectId // Made optional for anonymous users
+  hostId String? // Made optional for anonymous users
   hostType String @default("authenticated") // authenticated | anonymous
   hostUser User? @relation("HostedSessions", fields: [hostId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
@@ -181,7 +181,7 @@ model CollabSession {
 model CollabParticipant {
   id String @id @default(auto()) @map("_id") @db.ObjectId
   sessionId String @db.ObjectId
-  userId String? @db.ObjectId
+  userId String? 
   role String @default("viewer") // viewer | editor | host
   displayName String? // Fixed typo: was "dislpayName"
   joinedAt DateTime @default(now())
@@ -210,7 +210,7 @@ model CollabWorkspace {
   originalTemplateName String?  // e.g., "NEXTJS", "REACT"
   
   // Ownership
-  ownerId     String   @db.ObjectId
+  ownerId     String   
   owner       User     @relation("OwnedWorkspaces", fields: [ownerId], references: [id], onDelete: Cascade)
   
   // Metadata
@@ -230,7 +230,7 @@ model CollabWorkspace {
 
 model WorkspaceDraft {
 id            String   @id @default(auto()) @map("_id") @db.ObjectId
-userId        String   @db.ObjectId
+userId        String   
 sessionId     String?  
 repoFullName  String
 branch        String
