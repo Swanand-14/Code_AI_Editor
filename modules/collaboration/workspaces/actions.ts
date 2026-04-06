@@ -82,15 +82,7 @@ export async function getAllCollabWorkspaces():Promise<CollabWorkspaceRow[]> {
 
     const workspaces = await prisma.collabWorkspace.findMany({
       where: { ownerId: user.id ,templateData: { not: null }},
-      include: {
-        owner: {
-          select: {
-            id: true,
-            name: true,
-            image: true,
-          },
-        },
-      },
+      
       orderBy: { updatedAt: "desc" },
     });
 
@@ -122,9 +114,9 @@ export async function getAllCollabWorkspaces():Promise<CollabWorkspaceRow[]> {
         lastSavedAt: w.lastSavedAt,
         createdAt: w.createdAt,
         owner: {
-          id: w.owner.id,
-          name: w.owner.name ?? "",
-          image: w.owner.image,
+          id: user.id,
+          name: user.name ?? "",
+          image: user.image,
         },
         projectType: session?.projectType ?? "starter",
         repoOwner: session?.repoOwner ?? null,
