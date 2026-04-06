@@ -58,6 +58,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           return token
         }
         
+         token.sub = existingUser.id
         token.name = existingUser.name
         token.email = existingUser.email
         token.role = existingUser.role

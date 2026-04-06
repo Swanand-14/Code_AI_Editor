@@ -11,7 +11,7 @@ export const getAllPlaygrounds = async () => {
         }
         const playgrounds = await prisma.playground.findMany({
             where: { userId: user?.id},
-            include: {user:true,Starmark:{
+            include: {Starmark:{
                 where:{
                     userId:user?.id
                 },
