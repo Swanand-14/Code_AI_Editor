@@ -184,18 +184,22 @@ export default function ProjectTable({
                 </TableCell>
                 <TableCell>{format(new Date(project.createdAt), "MMM d, yyyy")}</TableCell>
                 <TableCell>
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full overflow-hidden">
-                      <Image
-                        src={project.user.image || "/placeholder.svg"}
-                        alt={project.user.name}
-                        width={32}
-                        height={32}
-                        className="object-cover"
-                      />
+                  {project.user ? (
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full overflow-hidden">
+                        <Image
+                          src={project.user.image || "/placeholder.svg"}
+                          alt={project.user.name || "User"}
+                          width={32}
+                          height={32}
+                          className="object-cover"
+                        />
+                      </div>
+                      <span className="text-sm">{project.user.name || "Unknown"}</span>
                     </div>
-                    <span className="text-sm">{project.user.name}</span>
-                  </div>
+                  ) : (
+                    <span className="text-sm text-gray-400">No user</span>
+                  )}
                 </TableCell>
                 <TableCell>
                   <DropdownMenu>
@@ -207,7 +211,7 @@ export default function ProjectTable({
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end" className="w-48">
                       <DropdownMenuItem asChild>
-                        <MarkedToggleButton markedForRevision={project.Starmark[0]?.isMarked} id={project.id} />
+                        <MarkedToggleButton markedForRevision={project.Starmark && project.Starmark.length > 0 ? project.Starmark[0]?.isMarked : false} id={project.id} />
                       </DropdownMenuItem>
                       <DropdownMenuItem asChild>
                         <Link href={`playground/${project.id}`} className="flex items-center">
