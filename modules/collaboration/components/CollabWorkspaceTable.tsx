@@ -173,13 +173,13 @@ function WorkspaceTable({
                   <div className="w-8 h-8 rounded-full overflow-hidden">
                     <Image
                       src={workspace.owner?.image || "/placeholder.svg"}
-                      alt={workspace.owner?.name}
+                      alt={workspace.owner?.name || "User"}
                       width={32}
                       height={32}
                       className="object-cover"
                     />
                   </div>
-                  <span className="text-sm">{workspace.owner.name}</span>
+                  <span className="text-sm">{workspace.owner?.name || "Unknown"}</span>
                 </div>
               </TableCell>
 
