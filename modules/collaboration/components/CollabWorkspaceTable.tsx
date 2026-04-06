@@ -172,8 +172,8 @@ function WorkspaceTable({
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-full overflow-hidden">
                     <Image
-                      src={workspace.owner.image || "/placeholder.svg"}
-                      alt={workspace.owner.name}
+                      src={workspace.owner?.image || "/placeholder.svg"}
+                      alt={workspace.owner?.name}
                       width={32}
                       height={32}
                       className="object-cover"
