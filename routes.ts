@@ -1,5 +1,11 @@
 export const publicRoutes: string[] = [
-  "/",  
+ "/",
+  "/features",
+  "/pricing",
+  "/docs",
+  "/blog",
+  "/about",
+  "/contact",
 ]
 
 export const protectedRoutes: string[] = [
@@ -7,13 +13,10 @@ export const protectedRoutes: string[] = [
 ]
 
 export const authRoutes: string[] = [
-"/auth/sign-in",
-"/auth/sign-in/", 
-  "/auth/register",   // if you have a register page
-  "/auth/register/",   // if you have a register page
+   "/auth/sign-in",
+  "/auth/sign-up",
   "/auth/error",  
-  "/auth/error/",  
 ]
 
 export const apiAuthPrefix: string = "/api/auth";
-export const DEFAULT_LOGIN_REDIRECT = '/';
+export const DEFAULT_LOGIN_REDIRECT = "/dashboard";

@@ -7,8 +7,6 @@ export const getUserById = async(id:string)=>{
         const user = await prisma.user.findUnique({
             where:{
                 id:id
-            },include:{
-              accounts:true
             }
         })
         return user;
@@ -34,8 +32,8 @@ export const getAccountByUserId = async(userId:string)=>{
 }
 
 export const currentUser = async()=>{
-    const user = await auth();
-    return user?.user;
+    const session = await auth();
+    return session?.user;
 
 
 }

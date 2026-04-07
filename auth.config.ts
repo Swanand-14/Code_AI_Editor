@@ -3,11 +3,11 @@ import type { NextAuthConfig } from "next-auth"
 import GitHub from "next-auth/providers/github"
 import Google from "next-auth/providers/google"
 
-const baseUrl = process.env.AUTH_URL || process.env.NEXTAUTH_URL || "http://localhost:3000"
+
 
 export default {
-  basePath: "/api/auth",
-  baseUrl: baseUrl,
+  
+  
   providers: [
     GitHub({
       clientId: process.env.GITHUB_ID!,
