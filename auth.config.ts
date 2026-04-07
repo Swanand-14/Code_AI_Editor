@@ -26,4 +26,16 @@ export default {
     error: "/auth/error",
   },
   trustHost: true,
+  useSecureCookies: true,  // ← add this
+  cookies: {
+    sessionToken: {
+      name: `__Secure-next-auth.session-token`,
+      options: {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        secure: true,
+      }
+    }
+  },
 } satisfies NextAuthConfig
