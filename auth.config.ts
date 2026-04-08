@@ -26,7 +26,7 @@ export default {
     error: "/auth/error",
   },
   trustHost: true,
-  useSecureCookies: true,  // ← add this
+  useSecureCookies: true,  
   cookies: {
     sessionToken: {
       name: `__Secure-next-auth.session-token`,

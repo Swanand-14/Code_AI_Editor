@@ -39,7 +39,7 @@ model Account {
 model GitHubRepository {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   userId      String   @db.ObjectId   
-  repoId      Int      @unique
+  repoId      Int      
   
   repoFullName    String
   
