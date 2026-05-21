@@ -16,7 +16,7 @@ templateData:TemplateFolder | null;
 isLoading:boolean;
 error:string|null;
 loadPlayground:()=>Promise<void>;
-saveTemplateData:(data:TemplateFolder)=>Promise<void>;
+saveTemplateData:(data:TemplateFolder)=>Promise<TemplateFolder|null>;
 }
 //@ts-ignore
 export const usePlayground = (id:string):UsePlaygroundReturn => {
@@ -78,7 +78,7 @@ export const usePlayground = (id:string):UsePlaygroundReturn => {
         setIsLoading(false);
      }
     },[id]);
-    const saveTemplateData = useCallback(async(data:TemplateFolder)=>{
+    const saveTemplateData = useCallback(async(data:TemplateFolder):Promise<TemplateFolder | null>=>{
       try {
         await SaveUpdatedCode(id,data);
         setTemplateData(data);
@@ -87,7 +87,7 @@ export const usePlayground = (id:string):UsePlaygroundReturn => {
       } catch (error) {
         console.error("Error saving template data:",error);
         toast.error("Failed to save changes")
-        throw error;
+        return null;
       }
     },[id])
 

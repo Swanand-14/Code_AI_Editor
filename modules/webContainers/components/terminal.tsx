@@ -16,8 +16,8 @@ interface TerminalProps {
   className?: string;
   theme?: "dark" | "light";
   webContainerInstance?: any;
-  onServerReady?: (url: string) => void; // 🔥 NEW: Callback when server starts
-  autoStartCommand?: string; // 🔥 NEW: Command to run automatically
+  onServerReady?: (url: string) => void; // Callback when server starts
+  autoStartCommand?: string; //Command to run automatically
 }
 
 // Define the methods that will be exposed through the ref

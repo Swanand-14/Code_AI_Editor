@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import type { Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";// not importing the actual socket.io-client to avoid bundling issues, just using the type for TypeScript
 import  { CURSOR_COLORS,CursorColor } from "../lib/cursorColors";
 
 
@@ -119,6 +119,7 @@ export function useRemoteCursors({socket,sessionId,currentFileId,currentUserId}:
         
         // 🔥 FIX: Clean up all pending timeouts
         timeoutRefsRef.current.forEach(timeout => clearTimeout(timeout));
+        userColorMap.clear();
         timeoutRefsRef.current.clear();
       }
 

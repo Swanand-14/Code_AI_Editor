@@ -43,6 +43,7 @@ import { fileCreationWatcher } from "@/modules/webContainers/services/fileWatche
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
+import { DownloadButton } from "@/modules/playground/components/DownloadButton";
 
 interface CollabPlaygroundProps {
   session: CollabSessionData;
@@ -1276,6 +1277,10 @@ useEffect(() => {
                 </TooltipTrigger>
                 <TooltipContent>Save (Ctrl+S)</TooltipContent>
               </Tooltip>
+              <DownloadButton
+  templateData={templateData}
+  projectName={`collab-${session.sessionId.slice(0, 8)}`}
+/>
 
               <Tooltip>
                 <TooltipTrigger asChild>

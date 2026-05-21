@@ -114,12 +114,7 @@ export const useWebContainer = ({
     const handleFileChange = (event: { path: string; content: string }) => {
       console.log(`📁 File changed: ${event.path}`);
       
-      // Dispatch event for UI components
-      window.dispatchEvent(
-        new CustomEvent("webcontainerFileChange", {
-          detail: { path: event.path, content: event.content },
-        })
-      );
+      
     };
 
     const handlePackageJsonChange = () => {

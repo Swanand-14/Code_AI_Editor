@@ -6,7 +6,7 @@ import { Save, Bot, Settings, FileText, X, AlertCircle, ExternalLink } from "luc
 
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { fileSyncService } from "@/modules/playground/services/file-sync-service";
+
 import { webContainerService } from "@/modules/webContainers/services/webContainer-services";
 import { StartCollabButton } from "@/modules/collaboration/components/StartCollaborationButton";
 import {
@@ -50,6 +50,7 @@ import { useRouter } from "next/navigation";
 import TerminalComponent,{TerminalRef} from "@/modules/webContainers/components/terminal";
 import { set } from "zod";
 import { fileCreationWatcher } from "@/modules/webContainers/services/fileWatcher";
+import { DownloadButton } from "@/modules/playground/components/DownloadButton";
 
 
 
@@ -200,6 +201,7 @@ useEffect(() => {
   if (!webContainerInstance || !templateData) return;
 
   console.log("🔍 Setting up package.json listener...");
+  
 
   const handlePackageJsonChange = async (data: { content: string }) => {
     console.log("📦 package.json changed in WebContainer!");
@@ -208,6 +210,15 @@ useEffect(() => {
       // Parse the new content
       const newPkg = JSON.parse(data.content);
       console.log("New dependencies:", Object.keys(newPkg.dependencies || {}));
+         const activelyEditedFile = openFiles.find(
+        (f) => f.filename === "package" && f.fileExtension === "json" && f.hasUnsavedChanges
+      );
+
+      if (activelyEditedFile) {
+        console.log("Skipping sync - package.json has unsaved changes");
+        toast.info("package.json has unsaved changes. Save to sync with terminal");
+        return;
+      }
       
       // Clone template data
       const updatedTemplateData = JSON.parse(JSON.stringify(templateData));
@@ -278,70 +289,7 @@ useEffect(() => {
     }
   }, [templateData, setTemplateData, openFiles.length]);
 
-  useEffect(()=>{
-    const handleFileChanged = (event:CustomEvent) =>{
-      const {path,content} = event.detail
-      console.log(`Terminal updated file:${path}`);
-      if(!templateData)return;
-      const fileName = path.split('/').pop()
-      const activelyEditedFile = openFiles.find(
-        (f)=>`${f.filename}.${f.fileExtension}` === fileName && f.hasUnsavedChanges
-      );
-      if(activelyEditedFile){
-        console.log(`Skipping sync - file ${fileName} has unsaved changes`)
-        toast.info(`${fileName} has unsaved changes .Save to sync with terminal`)
-        return;
-      }
-      const updatedTemplateData = JSON.parse(JSON.stringify(templateData));
-    
-    const updateFileInTree = (items: any[]): any[] => {
-      return items.map((item) => {
-        if ("folderName" in item) {
-          return {
-            ...item,
-            items: updateFileInTree(item.items)
-          };
-        } else {
-          const itemPath = `${item.filename}.${item.fileExtension}`;
-          if (path.endsWith(itemPath)) {
-            console.log(`✅ Updated ${itemPath} from terminal`);
-            return { ...item, content };
-          }
-          return item;
-        }
-      });
-    };
 
-        updatedTemplateData.items = updateFileInTree(updatedTemplateData.items);
-    setTemplateData(updatedTemplateData);
-    
-    // Update open files (only if not being edited)
-    const updatedOpenFiles = openFiles.map((file) => {
-      const filePath = `${file.filename}.${file.fileExtension}`;
-      if (path.endsWith(filePath) && !file.hasUnsavedChanges) {
-        return {
-          ...file,
-          content,
-          originalContent: content,
-          hasUnsavedChanges: false
-        };
-      }
-      return file;
-    });
-    
-    setOpenFiles(updatedOpenFiles);
-    
-    toast.success(`Synced ${path.split('/').pop()} from terminal`);
-  };
-
-  window.addEventListener('packageJsonUpdated', handleFileChanged as EventListener);
-  
-  return () => {
-    window.removeEventListener('packageJsonUpdated', handleFileChanged as EventListener);
-  };
-
-    
-  },[templateData, openFiles, setTemplateData, setOpenFiles])
 
 
 
@@ -568,7 +516,7 @@ useEffect(() => {
 
         }
 
-        await fileSyncService.syncFileImmediate(filepath,fileToSave.content)
+        
         const needsRestart = requiresServerRestart(fileToSave.filename,fileToSave.fileExtension)
         if(needsRestart && webContainerService.isServerRunning()){
           toast.loading("Restarting dev server .... ",{id:`save-${targetFile}`});
@@ -880,17 +828,27 @@ useEffect(() => {
 
   const handleSaveAll = async () => {
     const unsavedFiles = openFiles.filter((item) => item.hasUnsavedChanges);
-    if (unsavedFiles.length === 0) {
-      toast.info("No unsaved changes");
-      return;
-    }
+  if (unsavedFiles.length === 0) {
+    toast.info("No unsaved changes");
+    return;
+  }
 
-    try {
-      await Promise.all(unsavedFiles.map((f) => handleSave(f.id)));
-      toast.success(`Saved ${unsavedFiles.length} files`);
-    } catch (error) {
-      toast.error("Failed to save some files");
-    }
+  const results = await Promise.allSettled(
+    unsavedFiles.map((f) => handleSave(f.id))
+  );
+
+  // now you can check each result individually
+  const saved = results.filter((r) => r.status === "fulfilled");
+  const failed = results.filter((r) => r.status === "rejected");
+
+  if (failed.length === 0) {
+    toast.success(`Saved all ${saved.length} files`);
+  } else if (saved.length === 0) {
+    toast.error(`Failed to save all files`);
+  } else {
+    // partial success — this is the case Promise.all couldn't handle
+    toast.warning(`Saved ${saved.length} files, ${failed.length} failed`);
+  }
   };
 
   useEffect(() => {
@@ -961,15 +919,8 @@ useEffect(() => {
 
     console.log(`📝 Starting sync for: ${filePath}`);
     
-    // Queue for debounced writes to persist to database
-    fileSyncService.queueFileChange(filePath, value);
-    console.log(`⏳ Queued ${filePath} for debounced database sync (500ms)`);
-    console.log("📄 Active file:", {
-  filename: activeFile.filename,
-  extension: activeFile.fileExtension,
-  path: activeFile.path,  // ← What does this show?
-  id: activeFile.id
-});
+    
+   
     
     // Also write immediately to WebContainer for hot reload support
     if (webContainerInstance) {
@@ -977,11 +928,7 @@ useEffect(() => {
       writeFileSync?.(filePath, value)
         .then(() => {
           console.log(`✅ Successfully wrote ${filePath} to WebContainer`);
-          // 🔥 FIX: Emit a custom event to trigger preview refresh
-          window.dispatchEvent(new CustomEvent("webcontainerFileChange", {
-            detail: { filePath, content: value }
-          }));
-          console.log(`📡 Dispatched file change event for preview refresh`);
+          
         })
         .catch((error) => {
           console.error(`❌ Failed to sync ${filePath} immediately:`, error);
@@ -1082,10 +1029,10 @@ useEffect(() => {
       </Button>
     </TooltipTrigger>
     <TooltipContent>Create GitHub Repository</TooltipContent>
-  </Tooltip><div className="text-xs bg-yellow-100 p-2 rounded">
-  Template loaded: {templateData ? "✅" : "❌"} 
-  {templateData && ` | Items: ${templateData.items?.length || 0}`}
-</div>
+  </Tooltip><DownloadButton
+  templateData={templateData}
+  projectName={playgroundData?.name}
+/>
                 <StartCollabButton playgroundId={id} playgroundName={playgroundData?.name} templateData={templateData} />
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1127,6 +1074,7 @@ useEffect(() => {
                   </TooltipTrigger>
                   <TooltipContent>AI Assistant</TooltipContent>
                 </Tooltip> */}
+                
 
                 <Tooltip>
                   <TooltipTrigger asChild>

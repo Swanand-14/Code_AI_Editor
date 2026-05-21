@@ -615,3 +615,7 @@ class WebContainerService {
 }
 
 export const webContainerService = new WebContainerService();
+//This is created once at module load time. Every file that imports it gets the exact same
+//instance, ensuring a true singleton across the entire app.
+// Usage: import { webContainerService } from "./webContainer-services";
+//so they work on same instance

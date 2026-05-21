@@ -9,7 +9,7 @@ import { toast } from "sonner";
 interface UseCollabWebContainerProps {
   sessionId: string;
   templateData: TemplateFolder | null;
-  isHost: boolean; // 🔥 Critical: Only host boots WebContainer
+  isHost: boolean; // Critical: Only host boots WebContainer
   userId?: string;
   userName?: string;
   terminalRef?: React.RefObject<any>;
@@ -45,7 +45,7 @@ export const useCollabWebContainer = ({
   terminalRef,
 }: UseCollabWebContainerProps): UseCollabWebContainerReturn => {
   
-  // 🔥 HOST: Use full WebContainer (your existing hook)
+  //  HOST: Use full WebContainer (your existing hook)
   const hostWebContainer = useWebContainer({
     templateData: isHost ? templateData : null,
     autoStart: isHost,
@@ -54,7 +54,7 @@ export const useCollabWebContainer = ({
     skipInit: !isHost,
   });
 
-  // 🔥 GUEST: Just track remote state
+  // GUEST: Just track remote state
   const [guestServerUrl, setGuestServerUrl] = useState<string | null>(null);
   const [guestIsLoading, setGuestIsLoading] = useState(true);
   const [terminalHistory, setTerminalHistory] = useState<string[]>([]);
@@ -82,8 +82,8 @@ export const useCollabWebContainer = ({
       isLoading: hostWebContainer.isLoading
     });
 
-    // 1️⃣ Broadcast when server becomes ready
-    // 🔥 FIX: Only broadcast if BOTH conditions met AND not localhost
+    //  Broadcast when server becomes ready
+    //  FIX: Only broadcast if BOTH conditions met AND not localhost
     const isValidUrl = hostWebContainer.serverUrl && 
                        !hostWebContainer.serverUrl.includes('localhost') &&
                        !hostWebContainer.serverUrl.includes('127.0.0.1');
@@ -149,6 +149,11 @@ export const useCollabWebContainer = ({
       // Store in history
       setTerminalHistory(prev => [...prev, data]);
     };
+    // Monkey-patch terminal write function:
+
+// preserve original host output, and also broadcast the same output
+
+// to all guests in real-time via socket. Cleanup restores original write.
 
     return () => {
       if (terminalRef.current) {
@@ -157,15 +162,15 @@ export const useCollabWebContainer = ({
     };
   }, [isHost, terminalRef, socket, isConnected, sessionId]);
 
-  // ============================================
+  
   // GUEST: Listen for host events
-  // ============================================
+  
   useEffect(() => {
     if (isHost || !socket) return;
 
     console.log("👀 [GUEST] Setting up WebContainer listeners");
 
-    // 1️⃣ Server ready event
+    // Server ready event
     const handleServerReady = (data: {
       sessionId: string;
       serverUrl: string;
@@ -173,14 +178,14 @@ export const useCollabWebContainer = ({
     }) => {
       if (data.sessionId !== sessionId) return;
       
-      console.log("📡 [GUEST] Received server URL:", data.serverUrl);
+      console.log("GUEST Received server URL:", data.serverUrl);
       setGuestServerUrl(data.serverUrl);
       setGuestIsLoading(false);
       
       toast.success("Preview server is ready!");
     };
 
-    // 2️⃣ State updates
+    // State updates
     const handleStateUpdate = (data: {
       sessionId: string;
       isLoading: boolean;
@@ -213,7 +218,7 @@ export const useCollabWebContainer = ({
       setTerminalHistory(prev => [...prev, data.data]);
     };
 
-    // 4️⃣ Initial state sync (when guest joins)
+    // Initial state sync (when guest joins)
     const handleInitialSync = (data: {
       sessionId: string;
       serverUrl: string | null;
@@ -222,9 +227,9 @@ export const useCollabWebContainer = ({
     }) => {
       if (data.sessionId !== sessionId) return;
       
-      console.log("📡 [GUEST] Received initial state:", {
+      console.log("[GUEST] Received initial state:", {
         hasUrl: !!data.serverUrl,
-        serverUrl: data.serverUrl,  // 🔥 NEW: Log the actual URL
+        serverUrl: data.serverUrl,  //  NEW: Log the actual URL
         isRunning: data.isServerRunning,
         historyLines: data.terminalHistory.length
       });
@@ -234,9 +239,9 @@ export const useCollabWebContainer = ({
       if (data.serverUrl) {
         setGuestServerUrl(data.serverUrl);
         setGuestIsLoading(false);
-        console.log("✅ [GUEST] Preview URL set:", data.serverUrl);
+        console.log("GUEST Preview URL set:", data.serverUrl);
       } else {
-        console.log("⏳ [GUEST] No server URL yet, waiting for host...");
+        console.log("GUEST No server URL yet, waiting for host...");
         setGuestIsLoading(true);
       }
       
@@ -255,7 +260,7 @@ export const useCollabWebContainer = ({
     socket.on("webcontainer:terminal", handleTerminalOutput);
     socket.on("webcontainer:initial-sync", handleInitialSync);
 
-    // 🔥 FIX: Request initial state immediately AND periodically until received
+    //  FIX: Request initial state immediately AND periodically until received
     const requestSync = () => {
       if (!hasReceivedInitialState.current) {
         console.log("📡 [GUEST] Requesting initial state from host");
@@ -266,10 +271,10 @@ export const useCollabWebContainer = ({
     // Request immediately
     requestSync();
 
-    // 🔥 NEW: Keep requesting every 2 seconds until we get a response
+    //  NEW: Keep requesting every 2 seconds until we get a response
     const syncInterval = setInterval(() => {
       if (!hasReceivedInitialState.current) {
-        console.log("⏳ [GUEST] Still waiting for initial state, retrying...");
+        console.log(" Still waiting for initial state, retrying...");
         requestSync();
       } else {
         clearInterval(syncInterval);
@@ -285,25 +290,19 @@ export const useCollabWebContainer = ({
     };
   }, [isHost, socket, sessionId, terminalRef]);
 
-  // ============================================
   // File Sync: All users can trigger, host executes
-  // ============================================
+ 
   const syncFileToContainer = useCallback(
     async (path: string, content: string) => {
       if (isHost) {
         // HOST: Write directly to WebContainer
         try {
           await hostWebContainer.writeFileSync(path, content);
-          console.log(`✅ [HOST] Synced ${path} to WebContainer`);
+          console.log(` [HOST] Synced ${path} to WebContainer`);
           
-          // Dispatch event for HMR
-          window.dispatchEvent(
-            new CustomEvent("webcontainerFileChange", {
-              detail: { path, content },
-            })
-          );
+          
         } catch (error) {
-          console.error(`❌ Failed to sync ${path}:`, error);
+          console.error(` Failed to sync ${path}:`, error);
         }
       } else {
         // GUEST: Send sync request to host via Socket
@@ -314,16 +313,16 @@ export const useCollabWebContainer = ({
             content,
             userId,
           });
-          console.log(`📤 [GUEST] Requested file sync: ${path}`);
+          console.log(`[GUEST] Requested file sync: ${path}`);
         }
       }
     },
     [isHost, hostWebContainer, socket, isConnected, sessionId, userId]
   );
 
-  // ============================================
+  
   // HOST: Listen for guest file sync requests
-  // ============================================
+ 
   useEffect(() => {
     if (!isHost || !socket) return;
 
@@ -335,21 +334,16 @@ export const useCollabWebContainer = ({
     }) => {
       if (data.sessionId !== sessionId) return;
       
-      console.log(`📥 [HOST] File sync request from ${data.userId}: ${data.path}`);
+      console.log(` [HOST] File sync request from ${data.userId}: ${data.path}`);
       
       try {
         await hostWebContainer.writeFileSync(data.path, data.content);
         
-        // Trigger HMR
-        window.dispatchEvent(
-          new CustomEvent("webcontainerFileChange", {
-            detail: { path: data.path, content: data.content },
-          })
-        );
         
-        console.log(`✅ [HOST] Synced ${data.path} from guest`);
+        
+        console.log(` [HOST] Synced ${data.path} from guest`);
       } catch (error) {
-        console.error(`❌ Failed to sync ${data.path}:`, error);
+        console.error(`Failed to sync ${data.path}:`, error);
         
         // Notify guest of error
         socket.emit("webcontainer:sync-error", {
@@ -367,9 +361,9 @@ export const useCollabWebContainer = ({
     };
   }, [isHost, socket, sessionId, hostWebContainer]);
 
-  // ============================================
+ 
   // Server Control (Host-only actions)
-  // ============================================
+  
   const startServer = useCallback(async () => {
     if (!isHost) {
       console.warn("⚠️ Only host can start server");
@@ -380,7 +374,7 @@ export const useCollabWebContainer = ({
 
   const restartServer = useCallback(async () => {
     if (!isHost) {
-      console.warn("⚠️ Only host can restart server");
+      console.warn(" Only host can restart server");
       return;
     }
     
@@ -399,15 +393,15 @@ export const useCollabWebContainer = ({
 
   const stopServer = useCallback(() => {
     if (!isHost) {
-      console.warn("⚠️ Only host can stop server");
+      console.warn(" Only host can stop server");
       return;
     }
     hostWebContainer.stopServer();
   }, [isHost, hostWebContainer]);
 
-  // ============================================
+  
   // Return appropriate state based on role
-  // ============================================
+  
   return {
     serverUrl: isHost ? hostWebContainer.serverUrl : guestServerUrl,
     isLoading: isHost ? hostWebContainer.isLoading : guestIsLoading,

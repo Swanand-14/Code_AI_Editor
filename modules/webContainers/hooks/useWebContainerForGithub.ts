@@ -191,7 +191,7 @@ export const useWebContainerForGithub = ({
     return result;
   }, []);
 
-  // Add this helper inside the hook, before setupProject
+  
 const cleanupStaleFiles = useCallback(async (
   instance: any,
   currentFiles: GitHubFile[]
@@ -294,18 +294,18 @@ const cleanupStaleFiles = useCallback(async (
 
     async function initialize() {
       try {
-        writeToTerminal("🔄 Initializing WebContainer...\r\n");
+        writeToTerminal(" Initializing WebContainer...\r\n");
         const wc = await webContainerService.getInstance();
         if (mounted) {
           setInstance(wc);
-          writeToTerminal("✅ WebContainer initialized\r\n");
+          writeToTerminal("WebContainer initialized\r\n");
         }
       } catch (err) {
         console.error("Failed to initialize WebContainer:", err);
         if (mounted) {
           setError(err instanceof Error ? err.message : "Failed to initialize");
           writeToTerminal(
-            `❌ Failed to initialize: ${err instanceof Error ? err.message : "Unknown error"}\r\n`
+            `Failed to initialize: ${err instanceof Error ? err.message : "Unknown error"}\r\n`
           );
         }
       }
@@ -324,7 +324,7 @@ const cleanupStaleFiles = useCallback(async (
       console.log("🎯 Server ready:", url);
       setServerUrl(url);
       setIsServerRunning(true);
-      writeToTerminal(`\r\n✅ Server ready at: ${url}\r\n`);
+      writeToTerminal(`Server ready at: ${url}\r\n`);
     };
 
     const handleServerError = ({ code }: { code: number }) => {
@@ -363,12 +363,12 @@ const cleanupStaleFiles = useCallback(async (
   await webContainerService.setCurrentProject(projectId)
   currentProjectRef.current = projectId
   
-  // ✅ Always re-initialize on branch switch — never skip
+  // Always re-initialize on branch switch — never skip
   initializedProjects.current.delete(projectId)
 }
 
 if (initializedProjects.current.has(projectId)) {
-  console.log("✅ Project already initialized")
+  console.log(" Project already initialized")
   return
 }
 
@@ -382,7 +382,7 @@ if (initializedProjects.current.has(projectId)) {
 
         if (!detection.isSupported) {
           writeToTerminal(
-            "⚠️ This repository is not a supported web project\r\n"
+            " This repository is not a supported web project\r\n"
           );
           writeToTerminal(
             "Supported: Next.js, React (Vite/CRA), Vue, Node.js, Svelte\r\n"
@@ -399,11 +399,11 @@ if (initializedProjects.current.has(projectId)) {
         initializedProjects.current.add(projectId);
 
         // Mount files
-        writeToTerminal("🧹 Syncing filesystem to branch...\r\n")
+        writeToTerminal("Syncing filesystem to branch...\r\n")
         await cleanupStaleFiles(instance, files)
-        writeToTerminal("✅ Filesystem synced\r\n")
+        writeToTerminal(" Filesystem synced\r\n")
 
-// ✅ 2. Then mount new branch files onto clean disk
+//  2. Then mount new branch files onto clean disk
         const wcFiles = convertToWebContainerFormat(files)
         await instance.mount(wcFiles)
         writeToTerminal("✅ Files mounted\r\n")
