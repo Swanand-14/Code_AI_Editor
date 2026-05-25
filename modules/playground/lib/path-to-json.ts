@@ -5,6 +5,7 @@ import * as path from 'path';
  * Represents a file in the template structure
  */
 export interface TemplateFile {
+  
   filename: string;
   fileExtension: string;
   content: string;
