@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { toast } from 'sonner';
 import { WebContainer } from '@webcontainer/api';
 
-interface GitHubFile {
+export interface GitHubFile {
   name: string;
   path: string;
   sha: string;
@@ -161,7 +161,7 @@ function updateActiveBranch(
 
 const INITIAL_FLAT = flattenWorkspace(emptyBranchWorkspace());
 
-const initialState = {
+export const initialState = {
   repoFullName: '',
   owner: '',
   repo: '',

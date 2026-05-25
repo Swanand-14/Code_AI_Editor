@@ -19,7 +19,7 @@ export function findFilePath(
           item.filename + (item.fileExtension ? "." + item.fileExtension : ""),
         ].join("/");
         
-        // 🔥 CRITICAL FIX: Must match BOTH filename AND path
+        
         // Build the folder path from pathSoFar (excluding the filename itself)
         const currentFolderPath = pathSoFar.join("/");
         
@@ -80,42 +80,10 @@ export async function longPoll<T>(
   }
 }
 
-  // Helper function to generate unique file ID
-/**
- * Generates a unique file ID based on file location in folder structure
- * @param file The template file
- * @param rootFolder The root template folder containing all files
- * @returns A unique file identifier including full path
- */
-// export const generateFileId = (file: TemplateFile, rootFolder: TemplateFolder): string => {
-//   // 🔥 FIX: Use file.path if available (passed from explorer), otherwise find it
-//   // CRITICAL: Check if path is undefined, not falsy - empty string '' means root level
-//   let filePath = file.path;
-//   if (file.path === undefined) {
-//     // If no path provided, try to find it (will return first match)
-//     filePath = findFilePath(file, rootFolder)?.replace(/^\/+/, '') || '';
-//   } else {
-//     // 🔥 CRITICAL: If path is provided, verify it matches the file in folder structure
-//     // This ensures we get the correct file even if multiple have same name
-//     const normalizedPath = filePath.replace(/^\/+/, '');
-//     const verifiedPath = findFilePath(file, rootFolder, [], normalizedPath)?.replace(/^\/+/, '');
-//     if (verifiedPath) {
-//       filePath = verifiedPath;
-//     }
-//   }
-  
-//   // Handle empty/undefined file extension
-//   const extension = file.fileExtension?.trim();
-//   const extensionSuffix = extension ? `.${extension}` : '';
 
-//   // Combine path and filename
-//   return filePath
-//     ? `${filePath}/${file.filename}${extensionSuffix}`
-//     : `${file.filename}${extensionSuffix}`;
-// }
 
 export const generateFileId = (file: TemplateFile, rootFolder: TemplateFolder): string => {
-  // 🔥 DEBUG: Log what we're receiving
+  
   console.log("🔍 generateFileId called:", {
     filename: file.filename,
     extension: file.fileExtension,
@@ -123,7 +91,7 @@ export const generateFileId = (file: TemplateFile, rootFolder: TemplateFolder): 
     pathType: typeof file.path
   });
 
-  // 🔥 FIX: Use file.path if available (passed from explorer), otherwise find it
+ 
   let filePath = file.path;
   if (file.path === undefined) {
     // If no path provided, try to find it (will return first match)
@@ -139,7 +107,7 @@ export const generateFileId = (file: TemplateFile, rootFolder: TemplateFolder): 
   const extensionSuffix = extension ? `.${extension}` : '';
   const fullFileName = `${file.filename}${extensionSuffix}`;
 
-  // 🔥 CRITICAL FIX: Check if filePath already contains the filename
+  
   // This prevents "README.md/README.md" duplication
   if (filePath && filePath.endsWith(fullFileName)) {
     console.log("⚠️ Path already contains filename, using path as-is:", filePath);
@@ -155,13 +123,7 @@ export const generateFileId = (file: TemplateFile, rootFolder: TemplateFolder): 
   return finalId;
 }
 
-/**
- * 🔥 FIX: Add path information to all files in the template structure
- * This ensures files with same name in different directories can be distinguished
- * @param folder The template folder to enrich
- * @param basePath The base path so far (used internally for recursion)
- * @returns The enriched template folder with path info added to each file
- */
+
 export function enrichTemplateWithPaths(
   folder: TemplateFolder,
   basePath: string = ''

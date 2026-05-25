@@ -70,92 +70,7 @@ interface FileExplorerState{
   updateFileContent: (fileId: string, content: string) => void;
 }
 
-function getDefaultFileContent(filename: string, extension: string, parentPath: string): string {
-  const componentName = filename.charAt(0).toUpperCase() + filename.slice(1);
-  
-  // Next.js App Router page
-  if (filename === "page" && (extension === "tsx" || extension === "jsx")) {
-    return `export default function Page() {
-  return (
-    <div>
-      <h1>Page</h1>
-    </div>
-  )
-}`;
-  }
-  
-  // Next.js layout
-  if (filename === "layout" && (extension === "tsx" || extension === "jsx")) {
-    return `export default function Layout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
-  return <>{children}</>
-}`;
-  }
-  
-  // Next.js loading
-  if (filename === "loading" && (extension === "tsx" || extension === "jsx")) {
-    return `export default function Loading() {
-  return <div>Loading...</div>
-}`;
-  }
-  
-  // Next.js error
-  if (filename === "error" && (extension === "tsx" || extension === "jsx")) {
-    return `'use client'
 
-export default function Error({
-  error,
-  reset,
-}: {
-  error: Error & { digest?: string }
-  reset: () => void
-}) {
-  return (
-    <div>
-      <h2>Something went wrong!</h2>
-      <button onClick={() => reset()}>Try again</button>
-    </div>
-  )
-}`;
-  }
-  
-  // Regular React component
-  if (extension === "tsx" || extension === "jsx") {
-    return `export default function ${componentName}() {
-  return (
-    <div>
-      ${componentName}
-    </div>
-  )
-}`;
-  }
-  
-  // TypeScript
-  if (extension === "ts") {
-    return `// ${filename}.${extension}\n\nexport {};\n`;
-  }
-  
-  // JavaScript
-  if (extension === "js") {
-    return `// ${filename}.${extension}\n\n`;
-  }
-  
-  // CSS
-  if (extension === "css" || extension === "scss") {
-    return `/* ${filename}.${extension} */\n\n`;
-  }
-  
-  // JSON
-  if (extension === "json") {
-    return `{\n  \n}\n`;
-  }
-  
-  // Default: comment with filename
-  return `// ${filename}.${extension}\n`;
-}
 
 function findFolderByPath(root: TemplateFolder, pathParts: string[]): TemplateFolder {
   let current = root;
@@ -167,6 +82,14 @@ function findFolderByPath(root: TemplateFolder, pathParts: string[]): TemplateFo
   }
   return current;
 }
+
+export const initialState = {
+  playgroundId: "",
+  templateData: null as TemplateFolder | null,
+  openFiles: [] as OpenFile[],
+  activeFileId: null as string | null,
+  editorContent: "",
+};
 // @ts-ignore
 export const useFileExplorer = create<FileExplorerState>((set,get)=>({
     playgroundId:"",
@@ -190,7 +113,7 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
             return;
         }
         
-        // 🔥 FIX: Find the actual correct file from the template to ensure we have the right content
+        // Find the actual correct file from the template to ensure we have the right content
         // This prevents stale/incorrect content from being used when multiple files have the same name
         let correctFileContent = file.content || "";
         
@@ -296,14 +219,10 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
     console.log(`🆕 Creating new file: ${filePath}`);
 
 
-    // 🔥 FIX: Use smart default content if file is empty
-    const fileContent = newFile.content || getDefaultFileContent(
-      newFile.filename,
-      newFile.fileExtension,
-      parentPath
-    );
+    // Use smart default content if file is empty
+    const fileContent = newFile.content;
 
-    // 🔥 CRITICAL: Write to WebContainer FIRST
+    //  CRITICAL: Write to WebContainer FIRST
     if (instance && instance.fs) {
       // Ensure parent directories exist
       const pathParts = filePath.split('/');
@@ -319,9 +238,9 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
 
       // Write the file with content
       await instance.fs.writeFile(filePath, fileContent,'utf-8');
-      console.log(`✅ File written to WebContainer: ${filePath}`);
+      console.log(`File written to WebContainer: ${filePath}`);
     } else {
-      console.error("❌ writeFileSync or instance not available!");
+      console.error(" writeFileSync or instance not available!");
     }
 
     // Update templateData
@@ -340,7 +259,7 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
     // Add file with path and content
     const fileWithPath = {
       ...newFile,
-      content: fileContent, // ✅ Use default content
+      content: fileContent, //  Use default content
       path: parentPath || ""
     };
 
@@ -372,7 +291,7 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
     
     console.log(`🆕 Creating new folder: ${folderPath}`);
 
-    // 🔥 CRITICAL FIX: Create directory in WebContainer FIRST
+   
     if (instance && instance.fs) {
       await instance.fs.mkdir(folderPath, { recursive: true });
       console.log(`✅ Folder created in WebContainer: ${folderPath}`);
@@ -464,32 +383,25 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
       toast.error("Failed to delete file");
     }
   },
-  handleDeleteFolder: async (folder, parentPath,instance:any, saveTemplateData) => {
+  handleDeleteFolder: async (folder, parentPath, instance, saveTemplateData) => {
     const { templateData } = get();
     if (!templateData) return;
-
+ 
     try {
       const folderPath = parentPath
-          ? `${parentPath}/${folder.folderName}`
-          : folder.folderName;
-        
-        console.log(`🗑️ Deleting folder from WebContainer: ${folderPath}`);
-        
-        if (instance && instance.fs) {
-          try {
-            await instance.fs.rm(folderPath, { recursive: true, force: true });
-            console.log(`✅ Folder deleted from WebContainer: ${folderPath}`);
-          } catch (error) {
-            console.warn(`⚠️ Folder may not exist in WebContainer: ${folderPath}`, error);
-          }
-        }
-
-      const updatedTemplateData = JSON.parse(
-        JSON.stringify(templateData)
-      ) as TemplateFolder;
+        ? `${parentPath}/${folder.folderName}`
+        : folder.folderName;
+ 
+      if (instance && instance.fs) {
+        try {
+          await instance.fs.rm(folderPath, { recursive: true, force: true });
+        } catch (error) {}
+      }
+ 
+      const updatedTemplateData = JSON.parse(JSON.stringify(templateData)) as TemplateFolder;
       const pathParts = parentPath.split("/");
       let currentFolder = updatedTemplateData;
-
+ 
       for (const part of pathParts) {
         if (part) {
           const nextFolder = currentFolder.items.find(
@@ -498,35 +410,64 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
           if (nextFolder) currentFolder = nextFolder;
         }
       }
-
+ 
       currentFolder.items = currentFolder.items.filter(
-        (item) =>
-          !("folderName" in item) || item.folderName !== folder.folderName
+        (item) => !("folderName" in item) || item.folderName !== folder.folderName
       );
-
-      // Close all files in the deleted folder recursively
-      const closeFilesInFolder = (folder: TemplateFolder, currentPath: string = "") => {
-        folder.items.forEach((item) => {
+ 
+      // FIX: Find the folder in templateData (not the passed argument) so that
+      // items have the correct `path` property set, which generateFileId needs
+      // to produce the same ID that was assigned when the file was opened.
+      const findFolderInTemplate = (
+        root: TemplateFolder,
+        targetName: string,
+        parentPath: string
+      ): TemplateFolder | null => {
+        for (const item of root.items) {
+          if ("folderName" in item) {
+            const itemPath = parentPath ? `${parentPath}/${item.folderName}` : item.folderName;
+            if (item.folderName === targetName && itemPath === (parentPath ? `${parentPath}/${targetName}` : targetName)) {
+              return item;
+            }
+            const found = findFolderInTemplate(item, targetName, itemPath);
+            if (found) return found;
+          }
+        }
+        return null;
+      };
+ 
+      const folderInTemplate = findFolderInTemplate(
+        templateData,
+        folder.folderName,
+        parentPath
+      );
+ 
+      const closeFilesInFolder = (f: TemplateFolder, currentPath: string = "") => {
+        f.items.forEach((item) => {
           if ("filename" in item) {
-            // Generate the correct file ID using the same logic as openFile
+            // item.path is correctly set because it comes from templateData
             const fileId = generateFileId(item, templateData);
             get().closeFile(fileId);
           } else if ("folderName" in item) {
-            const newPath = currentPath ? `${currentPath}/${item.folderName}` : item.folderName;
+            const newPath = currentPath
+              ? `${currentPath}/${item.folderName}`
+              : item.folderName;
             closeFilesInFolder(item, newPath);
           }
         });
       };
-      
-      closeFilesInFolder(folder, parentPath ? `${parentPath}/${folder.folderName}` : folder.folderName);
-
+ 
+      if (folderInTemplate) {
+        closeFilesInFolder(
+          folderInTemplate,
+          parentPath ? `${parentPath}/${folder.folderName}` : folder.folderName
+        );
+      }
+ 
       set({ templateData: updatedTemplateData });
-
-      // Use the passed saveTemplateData function
       await saveTemplateData(updatedTemplateData);
       toast.success(`Deleted folder: ${folder.folderName}`);
     } catch (error) {
-      console.error("Error deleting folder:", error);
       toast.error("Failed to delete folder");
     }
   },
