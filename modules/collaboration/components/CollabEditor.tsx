@@ -11,9 +11,7 @@ import { useProximityWarnings } from "../hooks/useProximityWarnings";
 import { configureMonaco, getEditorLanguage } from "@/modules/playground/lib/editor-config";
 
 interface CollabEditorProps {
-  sessionId: string;
-  userId?: string;
-  userName?: string;
+  
   fileId: string;
   filePath: string;
   initialContent: string;
@@ -22,6 +20,11 @@ interface CollabEditorProps {
   remoteCursors?:RemoteCursor[];
   onEditorReady?: (editor: editor.IStandaloneCodeEditor) => void;
   onCursorPositionChange?: (position: { lineNumber: number; column: number }) => void;
+  isConnected: boolean;
+  emitCursorMove: (payload: any) => void;
+  emitEditorChange: (payload: any) => void;
+  socket: Socket | null;
+  userId?: string;
 }
 
 class CursorLabelWidget implements editor.IContentWidget {
@@ -165,14 +168,16 @@ class ProximityGlyphWidget implements editor.IContentWidget {
 
 
 export function CollabEditor({
-  sessionId,
-  userId,
-  userName,
+  
   fileId,
   filePath,
   initialContent,
   language,
-  onContentChange,remoteCursors = [], onCursorPositionChange,onEditorReady
+  onContentChange,remoteCursors = [], onCursorPositionChange,onEditorReady,isConnected,
+  emitCursorMove,
+  emitEditorChange,
+  socket,
+  userId,
 }: CollabEditorProps) {
   const editorRef = useRef<editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
@@ -190,11 +195,7 @@ export function CollabEditor({
   const cursorWidgetsRef = useRef<Map<string, CursorLabelWidget>>(new Map());
   const glyphWidgetsRef = useRef<Map<string, ProximityGlyphWidget>>(new Map());
 
-  const { socket, isConnected, emitCursorMove, emitEditorChange } = useCollabSocket(
-    sessionId,
-    userId,
-    userName
-  );
+  
 
  
 
@@ -295,7 +296,7 @@ export function CollabEditor({
     });
 
     },
-    [ emitCursorMove, sessionId, userId, userName, onCursorPositionChange]
+    [ emitCursorMove,  userId,  onCursorPositionChange]
   );
 
   const handleEditorChange = useCallback(

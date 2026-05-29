@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from "react";
 import type { Socket } from "socket.io-client";// not importing the actual socket.io-client to avoid bundling issues, just using the type for TypeScript
-import  { CURSOR_COLORS,CursorColor } from "../lib/cursorColors";
+import  { CURSOR_COLORS,CursorColor,CursorColorRegistry } from "../lib/cursorColors";
 
 
 
@@ -31,20 +31,14 @@ interface UseRemoteCursorsProps {
   currentUserId?: string;
   currentFileId?: string;
 }
- const userColorMap = new Map<string, CursorColor>();
+
 
 export function useRemoteCursors({socket,sessionId,currentFileId,currentUserId}:UseRemoteCursorsProps){
     const [remoteCursors,setRemoteCursors] = useState<Map<string,RemoteCursor>>(new Map())
     const timeoutRefsRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+    const colorRegistryRef = useRef(new CursorColorRegistry());
    
-    function assignCursorColor(userId: string): CursorColor {
-  if (!userColorMap.has(userId)) {
-    const index = userColorMap.size % CURSOR_COLORS.length;
-    userColorMap.set(userId, CURSOR_COLORS[index]);
-    console.log(`🎨 Assigned ${CURSOR_COLORS[index].name} to user ${userId}`);
-  }
-  return userColorMap.get(userId)!;
-}
+    
     useEffect(()=>{
         if(!socket)return;
         console.log("👆 Setting up remote cursor listeners");
@@ -72,7 +66,7 @@ export function useRemoteCursors({socket,sessionId,currentFileId,currentUserId}:
     isCurrentFile: data.fileId === currentFileId
   });
 
-  const color = assignCursorColor(data.userId);
+  const color = colorRegistryRef.current.assign(data.userId);
 
         console.log(`👆 Remote cursor from ${data.userName} at ${data.filePath}:${data.position.lineNumber}:${data.position.column}`);
         setRemoteCursors(prev=>{
@@ -81,14 +75,14 @@ export function useRemoteCursors({socket,sessionId,currentFileId,currentUserId}:
             return updated
         });
         
-        // 🔥 FIX: Clear previous timeout for this user and set a new one
+        //  Clear previous timeout for this user and set a new one
         const existingTimeout = timeoutRefsRef.current.get(data.userId);
         if(existingTimeout) {
             clearTimeout(existingTimeout);
         }
         
         const newTimeout = setTimeout(()=>{
-            console.log(`🔥 Removing stale cursor of ${data.userName} (no update for 6s)`);
+            console.log(` Removing stale cursor of ${data.userName} (no update for 6s)`);
             setRemoteCursors(prev=>{
                 const updated = new Map(prev)
                 updated.delete(data.userId);
@@ -117,9 +111,9 @@ export function useRemoteCursors({socket,sessionId,currentFileId,currentUserId}:
         socket.off("collab:remote-cursor",handleRemoteCursor)
         socket.off("collab:user-left",handleUserLeft)
         
-        // 🔥 FIX: Clean up all pending timeouts
+        
         timeoutRefsRef.current.forEach(timeout => clearTimeout(timeout));
-        userColorMap.clear();
+        colorRegistryRef.current.clear();
         timeoutRefsRef.current.clear();
       }
 

@@ -230,7 +230,7 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
         timestamp: Date.now(),
       });
     },
-    [socket, sessionId, userId, userName]
+    [ sessionId, userId, userName]
   );
 
   return {

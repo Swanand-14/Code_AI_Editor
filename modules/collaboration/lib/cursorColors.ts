@@ -12,9 +12,20 @@ export const CURSOR_COLORS = [
 ] as const;
 
 export type CursorColor = typeof CURSOR_COLORS[number];
-
-// Server-side: Map userId to consistent color
 const userColorMap = new Map<string, CursorColor>();
+export class CursorColorRegistry {
+  private map = new Map<string, CursorColor>();
+  assign(userId: string): CursorColor {
+    if (!this.map.has(userId)) {
+      const index = this.map.size % CURSOR_COLORS.length;
+      this.map.set(userId, CURSOR_COLORS[index]);
+    }
+    return this.map.get(userId)!;
+  }
+  clear(): void {
+    this.map.clear();
+  }
+}
 
 export function getUserColor(userId: string): CursorColor {
   if (!userColorMap.has(userId)) {
