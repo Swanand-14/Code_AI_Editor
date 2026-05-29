@@ -116,11 +116,11 @@ const sessionActivityLogs = new Map<string, ActivityLogEntry[]>();
 const recentActivityIds = new Map<string, Set<string>>();
 
 function isValidParticipant(userId?:string,userName?:string):boolean{
-  if(!userId || !userName){
+  if(!userId || !userName || !userId.trim() || !userName.trim()){
     console.warn("Invalid participant,missing username or userid",{userId,userName})
     return false;
   }
-  if(userName==="Anonymous"){
+  if(userName.toLowerCase()==="anonymous"){
     console.warn("Rejecting anomynous user ")
     return false;
   }
@@ -234,13 +234,13 @@ function removeParticipant(sessionId: string, socketId: string): {
     if (participant.socketIds.has(socketId)) {
       foundParticipant = participant;
       
-      // 🔥 Remove this socket from the set
+      //  Remove this socket from the set
       participant.socketIds.delete(socketId);
       
       console.log(`✅ Removed socket ${socketId} from ${participant.userName}`);
       console.log(`   Remaining connections: ${participant.socketIds.size}`);
       
-      // 🔥 If no connections left, remove participant entirely
+      //  If no connections left, remove participant entirely
       if (participant.socketIds.size === 0) {
         participants.delete(userId);
         wasLastConnection = true;
@@ -264,7 +264,7 @@ function getParticipants(sessionId: string) {
   const participants = sessionParticipants.get(sessionId);
   if (!participants) return [];
   
-  // Serialize for broadcasting (convert Set to array)
+  
   return Array.from(participants.values()).map(serializeParticipant);
 }
 
@@ -307,12 +307,12 @@ function logActivity(
   
   const logs = sessionActivityLogs.get(sessionId)!;
   
-  // 🔥 FIX: Create stable ID based on content + timestamp (rounded to second)
+  // Create stable ID based on content + timestamp (rounded to second)
   const timestamp = Date.now();
   const timestampSecond = Math.floor(timestamp / 1000) * 1000; // Round to second
   const activityId = `${userId}-${action}-${timestampSecond}`;
   
-  // 🔥 FIX: Check for duplicate
+  // Check for duplicate
   if (isActivityDuplicate(sessionId, activityId)) {
     return null; // Skip duplicate
   }
@@ -363,9 +363,9 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
     io.on("connection",async(socket:CollabSocket)=>{
         console.log("Client connected:",socket.id);
 
-        // ============================================
+        
         // COLLAB: Join Session
-        // ============================================
+        
         socket.on("collab:join",async(data:{sessionId:string;userId?:string;userName?:string})=>{
             const {sessionId,userId,userName} = data;
             console.log("\n📥 JOIN REQUEST:", {
@@ -405,7 +405,7 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
                 socket.userName = userName || "Anonymous";
 
                 // Join the session room
-                socket.join(sessionId);
+                
 
                 // Update participant's last seen
                 if (userId) {
@@ -455,6 +455,8 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
     return;
   }
 }
+//Bug is fixed ,firstly host presence is checked then user is allowed to join the session and socket.join is called after that. This ensures that the host is present in the room before any guest can join, preventing the issue of guests being able to join before the host and then being blocked when the host finally joins.
+socket.join(sessionId);
 
                 console.log(`🎭 Role determined: ${role} (hostId: ${session.hostId}, userId: ${userId})`);
                 const userWithImage = await prisma.user.findUnique({

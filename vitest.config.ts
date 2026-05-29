@@ -4,7 +4,7 @@ import path from "path";
 
 export default defineConfig({
   test: {
-    environment: "node",
+    environment: "jsdom",
     globals: false,
     reporters: "verbose",
     include: [
@@ -14,6 +14,7 @@ export default defineConfig({
       "modules/**/*.test.tsx",
     ],
     exclude: ["node_modules", ".next"],
+  
   },
   resolve: {
     alias: {

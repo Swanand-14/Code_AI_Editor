@@ -62,13 +62,13 @@ const editorInstanceRef = useRef<editor.IStandaloneCodeEditor | null>(null);
 const manuallyCreatedFilesRef = useRef<Set<string>>(new Set());
   const autoStartAttempted = useRef(false);
   
-  // 🔥 NEW: Preview toggle state
+  //  Preview toggle state
   const [showPreview, setShowPreview] = useState(true);
   
-  // 🔥 NEW: Terminal ref for WebContainer
+  // Terminal ref for WebContainer
   const terminalRef = useRef<TerminalRef>(null);
 
-  // 🔥 Use the same Zustand store as main playground
+  //  Use the same Zustand store as main playground
   const {
     templateData,
     setTemplateData,
@@ -90,7 +90,7 @@ const manuallyCreatedFilesRef = useRef<Set<string>>(new Set());
   } = useFileExplorer();
 
   // Initialize WebSocket connection
-  const { socket, isConnected, participants:oldparticipants, emitFileOpen, emitFileChange, emitFileAction } = useCollabSocket(
+  const { socket, isConnected, participants:oldparticipants, emitFileOpen, emitFileChange, emitFileAction , emitCursorMove, emitEditorChange,emitWebContainerCommand} = useCollabSocket(
     session.sessionId,
     user?.id,
     user?.name
@@ -110,10 +110,9 @@ const activeFile = Array.isArray(openFiles) ? openFiles.find((f) => f.id === act
   
   const { saveWorkSpace } = useWorkspaceAutoSave(session.sessionId, templateData, user?.id, true);
 
-  // 🔥 NEW: Determine if current user is host
+  //  Determine if current user is host
   const isHost = user?.id === session.hostId;
 
-  // 🔥 NEW: Initialize WebContainer (host-only boot)
   const webContainer = useCollabWebContainer({
     sessionId: session.sessionId,
     templateData,
@@ -121,6 +120,9 @@ const activeFile = Array.isArray(openFiles) ? openFiles.find((f) => f.id === act
     userId: user?.id,
     userName: user?.name,
     terminalRef,
+    socket,
+    isConnected,
+    emitWebContainerCommand,
   });
   const { remoteCursors, CursorsInCurrentFile } = useRemoteCursors({
   socket,
@@ -1469,9 +1471,9 @@ useEffect(() => {
                   <div className="flex-1 overflow-hidden">
                     {activeFile ? (
                       <CollabEditor
-                        sessionId={session.sessionId}
-                        userId={user?.id}
-                        userName={user?.name || "Anonymous"}
+                        
+                        
+                        
                         fileId={activeFile.id}
                         filePath={(() => {
                           const basePath = activeFile.path || "";
@@ -1489,6 +1491,11 @@ useEffect(() => {
                         remoteCursors={CursorsInCurrentFile}
                         onCursorPositionChange={setLocalCursorPosition}
                         onEditorReady={(editor) => { editorInstanceRef.current = editor; }}
+                        isConnected={isConnected}
+emitCursorMove={emitCursorMove}
+emitEditorChange={emitEditorChange}
+socket={socket}
+userId={user?.id}
                       />
                     ) : (
                       <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
@@ -1579,9 +1586,7 @@ useEffect(() => {
               <div className="flex-1 overflow-hidden">
                 {activeFile ? (
                   <CollabEditor
-                    sessionId={session.sessionId}
-                    userId={user?.id}
-                    userName={user?.name || "Anonymous"}
+                    
                     fileId={activeFile.id}
                     filePath={(() => {
                       const basePath = activeFile.path || "";
@@ -1599,6 +1604,11 @@ useEffect(() => {
                     remoteCursors={CursorsInCurrentFile}
                     onCursorPositionChange={setLocalCursorPosition}
                     onEditorReady={(editor) => { editorInstanceRef.current = editor; }}
+                    isConnected={isConnected}
+emitCursorMove={emitCursorMove}
+emitEditorChange={emitEditorChange}
+socket={socket}
+userId={user?.id}
                   />
                 ) : (
                   <div className="flex items-center justify-center h-full text-sm text-muted-foreground">

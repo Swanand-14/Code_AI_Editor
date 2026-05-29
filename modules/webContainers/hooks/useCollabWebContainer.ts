@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useWebContainer } from "../hooks/useWebContainer";
-import { useCollabSocket } from "@/modules/collaboration/hooks/useCollabSocket";
+
 import { TemplateFolder } from "@/modules/playground/lib/path-to-json";
 import { toast } from "sonner";
+import { any } from "zod";
 
 interface UseCollabWebContainerProps {
   sessionId: string;
@@ -13,6 +14,9 @@ interface UseCollabWebContainerProps {
   userId?: string;
   userName?: string;
   terminalRef?: React.RefObject<any>;
+  socket : Socket | null;          
+  isConnected: boolean;           
+  emitWebContainerCommand: (command: "start" | "stop" | "restart") => void;
 }
 
 interface UseCollabWebContainerReturn {
@@ -43,6 +47,9 @@ export const useCollabWebContainer = ({
   userId,
   userName,
   terminalRef,
+   socket,        
+  isConnected,  
+  emitWebContainerCommand, 
 }: UseCollabWebContainerProps): UseCollabWebContainerReturn => {
   
   //  HOST: Use full WebContainer (your existing hook)
@@ -60,11 +67,7 @@ export const useCollabWebContainer = ({
   const [terminalHistory, setTerminalHistory] = useState<string[]>([]);
   
   // Socket connection
-  const { socket, isConnected, emitWebContainerCommand } = useCollabSocket(
-    sessionId,
-    userId,
-    userName
-  );
+
 
   // Track if we've received initial state from host
   const hasReceivedInitialState = useRef(false);
