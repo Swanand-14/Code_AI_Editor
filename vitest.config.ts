@@ -14,6 +14,12 @@ export default defineConfig({
       "modules/**/*.test.tsx",
     ],
     exclude: ["node_modules", ".next"],
+     alias: {
+      "@webcontainer/api": new URL(
+        "./__mocks__/@webcontainer/api.ts",
+        import.meta.url
+      ).pathname,
+    },
   
   },
   resolve: {
