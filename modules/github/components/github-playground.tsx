@@ -50,15 +50,9 @@ import { useActiveFile,useChangeCount } from "../hooks/Usegitworkspace"
 import { commitAllChangesToGitHub, deleteWorkspaceDraft } from "../actions/index"
 import { SourceControlPanel } from "./SourceControlPanel"
 import { Separator } from "@/components/ui/separator"
+import { GitHubFile } from "../types"
 
-interface GitHubFile {
-  name: string
-  path: string
-  sha: string
-  size: number
-  type: "file" | "dir"
-  content?: string
-}
+
 
 export default function GitHubPlayground({ repoFullName }: { repoFullName: string }) {
   const [owner, repo] = repoFullName.split("/")
@@ -89,7 +83,7 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
   
   const router = useRouter()
 
-  // ✅ Git Workspace Store
+  // Git Workspace Store
   const {
     files,
     initializeWorkspace,
@@ -118,14 +112,14 @@ export default function GitHubPlayground({ repoFullName }: { repoFullName: strin
   const openFiles = useGitWorkspace(state => state.openFiles)
 const remoteState = useGitWorkspace(state => state.remoteState)
 
-  // ✅ Auto-save to MongoDB
+  //  Auto-save to MongoDB
   useWorkspaceAutosave({
     repoFullName,
     currentBranch,
     enabled: true,
   })
 
-  // ✅ Restore draft on load
+  // Restore draft on load
   const { isRestoring, restoreDraft } = useRestoreDraft()
 
   // WebContainer integration
@@ -154,7 +148,7 @@ const remoteState = useGitWorkspace(state => state.remoteState)
     try {
       const result = await fetchRepositoryTree(owner, repo, currentBranch)
       
-      if (result.success) {
+      if (result.success && result.data) {
         const filesWithContent = await Promise.all(
           result.data.map(async (file: GitHubFile) => {
             if (file.type === "file") {
@@ -172,7 +166,7 @@ const remoteState = useGitWorkspace(state => state.remoteState)
           })
         )
         
-        // ✅ Initialize workspace
+        // Initialize workspace
         initializeWorkspace(repoFullName, currentBranch, filesWithContent)
         await restoreDraft(repoFullName, currentBranch,null)
         setDraftRestoredAt(prev => prev + 1) 
@@ -293,10 +287,10 @@ const remoteState = useGitWorkspace(state => state.remoteState)
           return
         }
         
-        // ✅ Update via store
+        // Update via store
         updateFileInTree(packageJsonFile.path, { content: data.content })
         
-        // ✅ If package.json is currently open, update it
+        //  If package.json is currently open, update it
         if (activeFile?.path === packageJsonFile.path) {
           console.log("📝 [GITHUB] Updating open package.json file")
           updateFileContent(packageJsonFile.path, data.content)
@@ -341,10 +335,12 @@ const remoteState = useGitWorkspace(state => state.remoteState)
     }
   }
 
-  function handleContentChange(newContent: string) {
+  function handleContentChange(newContent: string | undefined) {
+    if (!newContent === undefined) return;
     if (!activeFile) return
     
-    updateFileContent(activeFile.path, newContent)
+    
+    updateFileContent(activeFile.path, newContent!)
 
     if (isWebContainerSupported && webContainerInstance) {
       webContainerInstance.fs.writeFile(`/${activeFile.path}`, newContent, 'utf-8')
@@ -381,7 +377,7 @@ const remoteState = useGitWorkspace(state => state.remoteState)
       if (result.success) {
         toast.success(`Committed ${changes.length} file(s)`)
         
-        initializeWorkspace(repoFullName, currentBranch, result.updatedFiles)
+        initializeWorkspace(repoFullName, currentBranch, result.updatedFiles?? [])
         
         await deleteWorkspaceDraft(repoFullName, currentBranch)
         
@@ -723,22 +719,9 @@ const remoteState = useGitWorkspace(state => state.remoteState)
   applyDraftToWC()
 }, [isReady, webContainerInstance,draftRestoredAt])
 
-  // ✅ Keyboard shortcut - using activeFile
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-        e.preventDefault()
-        if (activeFile?.hasChanges) {
-          setCommitDialogOpen(true)
-        }
-      }
-    }
+  
 
-    window.addEventListener("keydown", handleKeyDown)
-    return () => window.removeEventListener("keydown", handleKeyDown)
-  }, [activeFile])
-
-  // ✅ File watcher - using store methods
+  // File watcher - using store methods
   useEffect(() => {
     if (!webContainerInstance || !isReady || !isWebContainerSupported) return
     
@@ -1018,7 +1001,7 @@ const handleFileCreated = async (filePath: string, parentPath: string) => {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={loadRepositoryTree}
+                          onClick={() => loadRepositoryTree()}
                           disabled={isLoadingTree}
                           className="h-6 w-6"
                         >

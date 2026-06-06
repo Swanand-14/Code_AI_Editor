@@ -1,12 +1,12 @@
 import {create} from 'zustand';
 import { toast } from 'sonner';
-import { TemplateFile,TemplateFolder } from '../lib/path-to-json';
-import { Field } from 'react-hook-form';
+import type { TemplateFile,TemplateFolder } from '../lib/path-to-json';
+
 import { generateFileId } from '../lib';
 interface OpenFile extends TemplateFile{
     id:string;
     hasUnsavedChanges:boolean;
-    content:string;
+    
     originalContent:string
 }
 interface FileExplorerState{
@@ -30,25 +30,25 @@ interface FileExplorerState{
     parentPath: string,
     writeFileSync: (filePath: string, content: string) => Promise<void>,
     instance: any,
-    saveTemplateData: (data: TemplateFolder) => Promise<void>
+    saveTemplateData: (data: TemplateFolder) => Promise<TemplateFolder | null>
   ) => Promise<void>;
   handleAddFolder: (
     newFolder: TemplateFolder, 
     parentPath: string, 
     instance: any, 
-    saveTemplateData: (data: TemplateFolder) => Promise<void>
+    saveTemplateData: (data: TemplateFolder) => Promise<TemplateFolder | null>
   ) => Promise<void>;
   handleDeleteFile: (
     file: TemplateFile, 
     parentPath: string, 
     instance: any, 
-    saveTemplateData: (data: TemplateFolder) => Promise<void>
+    saveTemplateData: (data: TemplateFolder) => Promise<TemplateFolder | null>
   ) => Promise<void>;
   handleDeleteFolder: (
     folder: TemplateFolder,
     parentPath: string,
     instance: any, 
-    saveTemplateData: (data: TemplateFolder) => Promise<void>
+    saveTemplateData: (data: TemplateFolder) => Promise<TemplateFolder | null>
   ) => Promise<void>;
   handleRenameFile: (
     file: TemplateFile,
@@ -57,7 +57,7 @@ interface FileExplorerState{
      
     parentPath: string,
     instance: any,
-    saveTemplateData: (data: TemplateFolder) => Promise<void>
+    saveTemplateData: (data: TemplateFolder) => Promise<TemplateFolder | null>
   ) => Promise<void>;
   handleRenameFolder: (
     folder: TemplateFolder,
@@ -65,7 +65,7 @@ interface FileExplorerState{
      
     parentPath: string,
     instance: any,
-    saveTemplateData: (data: TemplateFolder) => Promise<void>
+    saveTemplateData: (data: TemplateFolder) => Promise<TemplateFolder | null>
   ) => Promise<void>;
   updateFileContent: (fileId: string, content: string) => void;
 }

@@ -5,6 +5,7 @@ import { webContainerService } from "../services/webContainer-services";
 import { TemplateFolder } from "@/modules/playground/lib/path-to-json";
 import { transformToWebContainerFormat } from "./transformer";
 import * as pako from 'pako';
+//@ts-ignore
 import untar from 'js-untar';
 import { toast } from "sonner";
 
@@ -413,33 +414,35 @@ useEffect(() => {
     if (!instance || !templateData || !projectId) return;
 
     async function setupProject() {
+      const safeProjectId = projectId!;
+      const safeTemplateData = templateData!;
       try {
         // Check if we're switching projects
-        if (currentProjectRef.current !== projectId) {
-          console.log(`🔄 Project switch detected: ${currentProjectRef.current} → ${projectId}`);
+        if (currentProjectRef.current !== safeProjectId) {
+          console.log(`🔄 Project switch detected: ${currentProjectRef.current} → ${safeProjectId}`);
           
           setIsLoading(true);
           setServerUrl(null);
           setIsServerRunning(false);
           setIsReady(false);
           serverStartAttempted.current = false;
-          await webContainerService.setCurrentProject(projectId);
+          await webContainerService.setCurrentProject(safeProjectId);
           
           hasInitialized.current = false;
-          currentProjectRef.current = projectId;
+          currentProjectRef.current = safeProjectId;
         }
 
         // Skip if already initialized for this project
-        if (hasInitialized.current && currentProjectRef.current === projectId) {
+        if (hasInitialized.current && currentProjectRef.current === safeProjectId) {
           console.log("✅ Project already initialized, skipping");
           return;
         }
 
-        console.log(`📁 Mounting project: ${projectId}`);
+        console.log(`📁 Mounting project: ${safeProjectId}`);
         hasInitialized.current = true;
 
         // Mount files
-        const files = transformToWebContainerFormat(templateData);
+        const files = transformToWebContainerFormat(safeTemplateData);
         await instance.mount(files);
         console.log("✅ Files mounted");
 
@@ -457,9 +460,9 @@ useEffect(() => {
           return null;
         };
         
-        packageJsonContent = findPackageJson(templateData.items) ?? "";
+        packageJsonContent = findPackageJson(safeTemplateData.items) ?? "";
         
-        // 🔥 FIX: Only modify Next.js projects - check if next is actually in dependencies
+        //  Only modify Next.js projects - check if next is actually in dependencies
         if (packageJsonContent) {
           try {
             const pkg = JSON.parse(packageJsonContent);
@@ -490,7 +493,7 @@ useEffect(() => {
           }
         }
         
-        const shouldInstall = await needsDependencyInstall(instance, projectId, packageJsonContent);
+        const shouldInstall = await needsDependencyInstall(instance, safeProjectId, packageJsonContent);
         
         if (shouldInstall) {
           const templateType = detectTemplateType(packageJsonContent);
@@ -514,7 +517,7 @@ useEffect(() => {
           }
           
           const hash = getPackageJsonHash(packageJsonContent);
-          localStorage.setItem(`${CACHE_KEY_PREFIX}${projectId}`, hash);
+          localStorage.setItem(`${CACHE_KEY_PREFIX}${safeProjectId}`, hash);
           console.log("✅ Dependencies installed and cached");
         } else {
           console.log("Skipping npm install - using cached dependencies");

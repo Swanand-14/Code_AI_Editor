@@ -10,7 +10,7 @@ class WebContainerService {
   private sessionId: string | null = null;
   private detectedPort: number | null = null;
   
-  // 🔥 NEW: File watcher state
+  
   private fileWatchers: Map<string, AsyncIterator<any>> = new Map();
   private packageJsonContent: string | null = null;
   private packageJsonPollInterval: NodeJS.Timeout | null = null;
@@ -27,7 +27,7 @@ class WebContainerService {
       .then((instance) => {
         WebContainerService.instance = instance;
         this.setupServerListener(instance);
-        this.setupFileWatchers(instance); // 🔥 NEW
+        this.setupFileWatchers(instance); 
         
         console.log("✅ WebContainer initialized");
         return instance;
@@ -59,14 +59,14 @@ class WebContainerService {
   
 
 
-  // 🔥 NEW: Setup file watchers for critical files
+  //  Setup file watchers for critical files
    private setupFileWatchers(instance: WebContainer) {
     console.log("📦 Setting up package.json polling...");
     this.startPackageJsonPolling(instance);
   }
 
 
-  // 🔥 NEW: Watch a specific file
+  //  Watch a specific file
   private async startPackageJsonPolling(instance: WebContainer) {
     // Read initial content
     try {
@@ -105,7 +105,7 @@ class WebContainerService {
       }
     }, 2000); // Check every 2 seconds
     
-    console.log("✅ Package.json polling started (checking every 2s)");
+    console.log("Package.json polling started (checking every 2s)");
   }
 
   on(event: string, callback: Function) {
@@ -219,7 +219,7 @@ class WebContainerService {
       await instance.fs.writeFile(fullPath, content);
       console.log(`✅ Successfully wrote ${fullPath} to WebContainer filesystem`);
       
-      // 🔥 NEW: Emit write event for terminal/UI sync
+      //  Emit write event for terminal/UI sync
       this.emit("file-written", { path: fullPath, content });
     } catch (error) {
       console.error(`❌ Error writing file ${path}:`, error);
@@ -244,9 +244,7 @@ class WebContainerService {
     }
   }
 
-  /**
- * 🔥 NEW: Patch Next.js to fix Ctrl+C handling in WebContainer
- */
+
   async patchNextJsForWebContainer(): Promise<void> {
     try {
       const instance = await this.getInstance();
@@ -264,8 +262,7 @@ class WebContainerService {
       const filePath = 'node_modules/next/dist/server/lib/start-server.js';
       let content = await instance.fs.readFile(filePath, 'utf-8');
       
-      // Replace process.exit('SIGINT') with process.exit(130)
-      // 130 is the standard exit code for SIGINT (128 + 2)
+     
       const patched = content.replace(
         /process\.exit\(['"]SIGINT['"]\)/g,
         'process.exit(130)'
@@ -283,9 +280,7 @@ class WebContainerService {
     }
   }
 
-  /**
-   * 🔥 ENHANCED: Detect correct start command with better version detection
-   */
+  
   async detectStartCommand(): Promise<{ command: string; args: string[] }> {
     try {
       const packageJson = await this.readFile("package.json");
@@ -340,16 +335,10 @@ class WebContainerService {
     }
   }
 
-  /**
-   * 🔥 NEW: Error handler for server failures
-   */
   handleServerError(callback: (data: { code: number }) => void) {
     this.on("server-error", callback);
   }
 
-  /**
-   * 🔥 ENHANCED: Verify binaries with better detection
-   */
   async verifyBinaries(): Promise<boolean> {
     try {
       const instance = await this.getInstance();
@@ -374,9 +363,7 @@ class WebContainerService {
     }
   }
 
-  /**
-   * 🔥 ENHANCED: Install with output streaming to terminal
-   */
+  
   async installDependencies(onOutput?: (data: string) => void): Promise<number> {
     const instance = await this.getInstance();
     
@@ -407,7 +394,7 @@ class WebContainerService {
     console.log("✅ npm install completed");
     onOutput?.("\r\n✅ npm install completed successfully\r\n");
     
-    // 🔥 FIX: Read updated package.json and package-lock.json and emit change event
+   
     try {
       const packageJsonContent = await instance.fs.readFile('/package.json', 'utf-8');
       console.log("📦 Emitting package.json change event after install");
@@ -429,7 +416,7 @@ class WebContainerService {
       console.error("Failed to read package.json after install:", error);
     }
     
-    // 🔥 FIX: Verify and fix .bin directory
+    
     const binariesOk = await this.verifyBinaries();
     
     if (!binariesOk) {
@@ -467,9 +454,7 @@ class WebContainerService {
     return exitCode;
   }
 
-  /**
-   * 🔥 ENHANCED: Start dev server with proper output streaming
-   */
+  
   async startDevServer(
     command?: string,
     args?: string[],

@@ -5,19 +5,20 @@ import * as path from 'path';
  * Represents a file in the template structure
  */
 export interface TemplateFile {
-  
   filename: string;
   fileExtension: string;
   content: string;
-  path?: string; // 🔥 FIX: Add path to distinguish files with same name in different dirs
+  path?: string;
 }
 
-/**
- * Represents a folder in the template structure which can contain files and other folders
- */
+//  TemplateFolder — folder fields + optional DB fields
 export interface TemplateFolder {
   folderName: string;
   items: (TemplateFile | TemplateFolder)[];
+  playgroundId?: string;
+  parentFolderId?: string | null;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 /**
@@ -140,7 +141,7 @@ async function processDirectory(
   folderName: string, 
   folderPath: string, 
   options: ScanOptions,
-  basePath: string = ''  // 🔥 FIX: Add basePath parameter
+  basePath: string = ''  
 ): Promise<TemplateFolder> {
   try {
     // Read directory contents
@@ -161,7 +162,7 @@ async function processDirectory(
         }
         
         // If it's a directory, process it recursively
-        // 🔥 FIX: Pass down the accumulated basePath
+        
         const newBasePath = basePath ? `${basePath}/${entryName}` : entryName;
         const subFolder = await processDirectory(entryName, entryPath, options, newBasePath);
         items.push(subFolder);
@@ -192,7 +193,7 @@ async function processDirectory(
             content = await fs.promises.readFile(entryPath, 'utf8');
           }
           
-          // 🔥 FIX: Add path to file object
+          
           items.push({
             filename: parsedPath.name,
             fileExtension: parsedPath.ext.replace(/^\./, ''), // Remove leading dot
@@ -203,7 +204,7 @@ async function processDirectory(
           console.error(`Error reading file ${entryPath}:`, error);
           // Still include the file but with an error message as content
           const parsedPath = path.parse(entryName);
-          // 🔥 FIX: Add path to file object even for errors
+          
           items.push({
             filename: parsedPath.name,
             fileExtension: parsedPath.ext.replace(/^\./, ''),

@@ -1,6 +1,4 @@
-// ============================================
-// 🔥 CREATE NEW FILE: hooks/useCollabParticipants.ts
-// ============================================
+
 "use client";
 
 import { useEffect, useState,useRef } from "react";
@@ -53,9 +51,7 @@ export function useCollabParticipants({
 
     console.log("👥 Setting up participant listeners");
 
-    // ============================================
-    // 1️⃣ Initial participant list
-    // ============================================
+  
     const handleParticipantsUpdated = (data: { participants: ParticipantInfo[] }) => {
       console.log("📡 Received participants update:", data.participants.length);
       
@@ -68,9 +64,7 @@ export function useCollabParticipants({
       setParticipants(Array.from(uniqueParticipants.values()));
     };
 
-    // ============================================
-    // 2️⃣ Participant activity updates (file/cursor)
-    // ============================================
+  
     const handleParticipantActivity = (data: {
       userId: string;
       activeFile?: string;
@@ -86,9 +80,7 @@ export function useCollabParticipants({
       );
     };
 
-    // ============================================
-    // 3️⃣ Initial activity logs
-    // ============================================
+
     const handleActivityLogs = (data: { logs: ActivityLogEntry[] }) => {
       console.log("📡 Received activity logs:", data.logs.length);
       recentActivityIds.current.clear();
@@ -98,11 +90,10 @@ export function useCollabParticipants({
       setActivityLogs(data.logs);
     };
 
-    // ============================================
-    // 4️⃣ New activity entry
-    // ============================================
+  
+    
     const handleNewActivity = (activity: ActivityLogEntry) => {
-      // 🔥 FIX: Don't add duplicate if it's your own action
+      // Don't add duplicate if it's your own action
       if (activity.userId === currentUserId) {
         // Already logged locally, skip
         return;
@@ -139,23 +130,17 @@ export function useCollabParticipants({
       });
     };
 
-    // ============================================
-    // 5️⃣ Attach listeners
-    // ============================================
+ 
     socket.on("collab:participants-updated", handleParticipantsUpdated);
     socket.on("collab:participant-activity", handleParticipantActivity);
     socket.on("collab:activity-logs", handleActivityLogs);
     socket.on("collab:activity-new", handleNewActivity);
 
-    // ============================================
-    // 6️⃣ Request initial data
-    // ============================================
+    
     socket.emit("collab:request-participants", { sessionId });
     socket.emit("collab:request-activity", { sessionId });
 
-    // ============================================
-    // 7️⃣ Cleanup
-    // ============================================
+    
     return () => {
       socket.off("collab:participants-updated", handleParticipantsUpdated);
       socket.off("collab:participant-activity", handleParticipantActivity);
@@ -164,9 +149,7 @@ export function useCollabParticipants({
     };
   }, [socket, sessionId, currentUserId]);
 
-  // ============================================
-  // Helper: Update your own activity
-  // ============================================
+
   const updateActivity = (activeFile?: string, cursor?: any) => {
     if (socket) {
       socket.emit("collab:update-activity", {

@@ -35,7 +35,7 @@ interface WebContainerPreviewProps {
   onRestartServer?: () => Promise<void>;
   className?: string;
   templateData?: any;
-  terminalRef?: React.RefObject<TerminalRef>; // Accept terminal ref from parent
+  terminalRef?: React.RefObject<TerminalRef | null>;
   showTerminal?: boolean;
   onServerReady?: (url: string) => void;
 }
@@ -64,8 +64,8 @@ export const WebContainerPreview = ({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [currentUrl, setCurrentUrl] = useState<string>("");
   const [addressBarInput, setAddressBarInput] = useState<string>("");
-  const healthCheckInterval = useRef<NodeJS.Timeout>();
-  const fileChangeDebounceRef = useRef<NodeJS.Timeout>(); // kept from original
+ const healthCheckInterval = useRef<NodeJS.Timeout | undefined>(undefined);
+const fileChangeDebounceRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const healthCheckAttempts = useRef(0);
   const [terminalServerUrl, setTerminalServerUrl] = useState<string | null>(null); // kept from original
 
@@ -77,14 +77,14 @@ export const WebContainerPreview = ({
   const [activeTabId, setActiveTabId] = useState<string>(() => tabs[0].id);
 
   // Stable map: tabId -> ref (only for tabs beyond tab-0)
-  const extraTabRefs = useRef<Map<string, React.RefObject<TerminalRef>>>(new Map());
+  const extraTabRefs = useRef<Map<string, React.RefObject<TerminalRef | null>>>(new Map());
   tabs.slice(1).forEach((tab) => {
     if (!extraTabRefs.current.has(tab.id)) {
       extraTabRefs.current.set(tab.id, React.createRef<TerminalRef>());
     }
   });
 
-  const refForTab = (tabId: string): React.RefObject<TerminalRef> =>
+  const refForTab = (tabId: string): React.RefObject<TerminalRef | null> =>
     tabId === tabs[0].id
       ? tab0Ref
       : (extraTabRefs.current.get(tabId) ?? React.createRef<TerminalRef>());
@@ -176,7 +176,7 @@ export const WebContainerPreview = ({
     </div>
   );
 
-  // ─── All original effects below — zero changes ────────────────────────────
+ 
 
   // Health check for server readiness
   useEffect(() => {

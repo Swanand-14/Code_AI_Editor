@@ -3,15 +3,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { webContainerService } from "../services/webContainer-services";
 import { set } from "zod";
+import { GitHubFile } from "../../github/types";
 
-interface GitHubFile {
-  name: string;
-  path: string;
-  sha: string;
-  size: number;
-  type: "file" | "dir";
-  content?: string;
-}
+
 
 interface UseWebContainerForGithubProps {
   files: GitHubFile[];

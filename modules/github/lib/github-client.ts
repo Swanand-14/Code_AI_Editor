@@ -15,11 +15,12 @@ export interface GitHubFile {
 }
 
 export interface GitHubRepo{
-    id:string;
+    id:number;
     name:string;
     full_name:string;
     description:string | null;
     private:boolean;
+    updated_at?: string | null;
     
     default_branch:string;
 }
@@ -29,7 +30,7 @@ interface CreateRepoParams {
   description:string,
   isPrivate:boolean,
   initializeWithReadme:boolean,
-  addGitIgnore:boolean
+  addGitIgnore?:boolean
 }
 
 interface FileToCommit{

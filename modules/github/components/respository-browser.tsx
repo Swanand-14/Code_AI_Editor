@@ -10,16 +10,7 @@ import { Search, GitBranch, Lock, Globe, Loader2, AlertCircle } from "lucide-rea
 import { signIn } from "next-auth/react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { StartGitHubCollabButton } from "@/modules/collaboration/components/StartCollabGitHub"
-
-interface Repository {
-  id: number
-  name: string
-  full_name: string
-  description: string | null
-  private: boolean
-  default_branch: string
-  updated_at: string
-}
+import type { GitHubRepo as Repository } from "@/modules/github/lib/github-client"
 
 export function RepositoryBrowser() {
   const [repos, setRepos] = useState<Repository[]>([])
@@ -54,7 +45,7 @@ export function RepositoryBrowser() {
     
     const result = await fetchUserRepositories()
     
-    if (result.success) {
+    if (result.success && result.data) {
       setRepos(result.data)
       setFilteredRepos(result.data)
     } else {
@@ -168,7 +159,7 @@ export function RepositoryBrowser() {
                   <GitBranch className="h-3 w-3" />
                   <span>{repo.default_branch}</span>
                   <span>•</span>
-                  <span>Updated {new Date(repo.updated_at).toLocaleDateString()}</span>
+                  <span>Updated {repo.updated_at != null ? new Date(repo.updated_at).toLocaleDateString() : "Unknown"}</span>
                 </div>
               </div>
 

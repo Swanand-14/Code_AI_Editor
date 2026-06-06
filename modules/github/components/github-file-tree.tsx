@@ -12,22 +12,19 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Button } from "@/components/ui/button"
 
-interface GitHubFile {
-  name: string
-  path: string
-  sha: string
-  type: "file" | "dir"
-}
+import { GitHubFile } from "../types"
+
+
 
 interface FileTreeProps {
   files: GitHubFile[]
-  onFileSelect: (file: GitHubFile) => void
+  onFileSelect: (file: GitHubFile) => void | Promise<void>;
   selectedPath?: string
   onCreateFile?: (path: string) => void
   onCreateFolder?: (path: string) => void
-  onDeleteFile?: (file: GitHubFile) => void
+  onDeleteFile?: (file: GitHubFile) => void | Promise<void>;
   onDeleteFolder?: (folderPath: string, folderName: string) => void 
-  onRenameFile?: (file: GitHubFile, newName: string) => void
+  onRenameFile?: (file: GitHubFile, newName: string) => void | Promise<void>;
   onRenameFolder?: (folderPath: string, folderName: string, newName: string) => void
   expandedDirs?: Set<string> 
   onExpandedDirsChange?: (dirs: Set<string>) => void 
