@@ -20,12 +20,12 @@ interface PlaygroundEditorProps {
     disableAI?: boolean 
 }
 
-// CHANGE 1: Component name capitalized (React convention)
+//  Component name capitalized (React convention)
 const PlaygroundEditor = ({
   activeFile,
   content,
   onContentChange,
-  // CHANGE 2: Added missing destructured props
+  // Added missing destructured props
   suggestions,
   suggestionLoading,
   suggestionPosition,
@@ -54,7 +54,7 @@ const createInlineCompletionProvider = useCallback(
       return {
         provideInlineCompletions: async (model: any, position: any, context: any, token: any) => {
           console.log("provideInlineCompletions called", {
-            // CHANGE 3: Fixed variable name from 'suggestion' to 'suggestions'
+            
             hasSuggestion: !!suggestions,
             hasPosition: !!suggestionPosition,
             currentPos: `${position.lineNumber}:${position.column}`,
@@ -70,7 +70,7 @@ const createInlineCompletionProvider = useCallback(
           }
 
           // Only provide suggestion if we have one
-          // CHANGE 4: Fixed variable name from 'suggestion' to 'suggestions'
+          //  Fixed variable name from 'suggestion' to 'suggestions'
           if (!suggestions || !suggestionPosition) {
             console.log("No suggestion or position available")
             return { items: [] }
@@ -95,17 +95,17 @@ const createInlineCompletionProvider = useCallback(
 
           const suggestionId = generateSuggestionId()
           currentSuggestionRef.current = {
-            // CHANGE 5: Fixed variable name from 'suggestion' to 'suggestions'
+            //  Fixed variable name from 'suggestion' to 'suggestions'
             text: suggestions,
             position: suggestionPosition,
             id: suggestionId,
           }
 
-          // CHANGE 6: Fixed variable name from 'suggestion' to 'suggestions'
+          //  Fixed variable name from 'suggestion' to 'suggestions'
           console.log("Providing inline completion", { suggestionId, suggestion: suggestions.substring(0, 50) + "..." })
 
           // Clean the suggestion text (remove \r characters)
-          // CHANGE 7: Fixed variable name from 'suggestion' to 'suggestions'
+          // Fixed variable name from 'suggestion' to 'suggestions'
           const cleanSuggestion = suggestions.replace(/\r/g, "")
 
           return {
@@ -132,9 +132,12 @@ const createInlineCompletionProvider = useCallback(
         freeInlineCompletions: (completions: any) => {
           console.log("freeInlineCompletions called")
         },
+        disposeInlineCompletions: () => {
+    // required by Monaco's InlineCompletionsProvider interface
+  },
       }
     },
-    // CHANGE 8: Fixed dependency from 'suggestion' to 'suggestions'
+    
     [suggestions, suggestionPosition],
   )
 
@@ -251,7 +254,7 @@ if(editorRef.current){
     const monaco = monacoRef.current
 
     console.log("Suggestion changed", {
-      // CHANGE 9: Fixed variable name from 'suggestion' to 'suggestions'
+      
       hasSuggestion: !!suggestions,
       hasPosition: !!suggestionPosition,
       isAccepting: isAcceptingSuggestionRef.current,
@@ -298,7 +301,7 @@ if(editorRef.current){
         inlineCompletionProviderRef.current = null
       }
     }
-    // CHANGE 11: Fixed dependency from 'suggestion' to 'suggestions'
+    
   }, [suggestions, suggestionPosition, activeFile, createInlineCompletionProvider])
 
 const hasActiveSuggestionAtPosition = useCallback(() => {
@@ -372,6 +375,7 @@ const handleEditorDidMount = (editor:any,monaco:Monaco)=>{
       },
       resolveLink: (link: any) => {
         return {
+          range: link.range,  
           url: link.url,
           tooltip: `Click to open: ${link.url}`
         };
@@ -407,6 +411,7 @@ const handleEditorDidMount = (editor:any,monaco:Monaco)=>{
         },
         resolveLink: (link: any) => {
           return {
+            range: link.range,  
             url: link.url,
             tooltip: `Click to open: ${link.url}`
           };
@@ -603,5 +608,5 @@ useEffect(()=>{
   )
 }
 
-// CHANGE 12: Export with capitalized name
+
 export default PlaygroundEditor

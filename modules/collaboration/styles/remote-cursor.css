@@ -1,10 +1,4 @@
-/* ============================================
-   Remote Cursor Styles (Enhanced with Gutter Icons)
-   ============================================ */
 
-/* ============================================
-   Cursor Lines (Different Colors)
-   ============================================ */
 .remoteCursorBlue {
   border-left: 3px solid #3b82f6 !important;
   animation: blink-cursor 1s infinite;

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useWebContainer } from "../hooks/useWebContainer";
+import { Socket } from "socket.io-client";
 
 import { TemplateFolder } from "@/modules/playground/lib/path-to-json";
 import { toast } from "sonner";
@@ -72,9 +73,9 @@ export const useCollabWebContainer = ({
   // Track if we've received initial state from host
   const hasReceivedInitialState = useRef(false);
 
-  // ============================================
+   
   // HOST: Broadcast WebContainer events
-  // ============================================
+  
   useEffect(() => {
     if (!isHost || !socket || !isConnected) return;
 
@@ -86,7 +87,7 @@ export const useCollabWebContainer = ({
     });
 
     //  Broadcast when server becomes ready
-    //  FIX: Only broadcast if BOTH conditions met AND not localhost
+    
     const isValidUrl = hostWebContainer.serverUrl && 
                        !hostWebContainer.serverUrl.includes('localhost') &&
                        !hostWebContainer.serverUrl.includes('127.0.0.1');
@@ -108,7 +109,7 @@ export const useCollabWebContainer = ({
       });
     }
 
-    // 2️⃣ Broadcast loading state changes
+    //  Broadcast loading state changes
     socket.emit("webcontainer:state", {
       sessionId,
       isLoading: hostWebContainer.isLoading,
@@ -127,9 +128,9 @@ export const useCollabWebContainer = ({
     hostWebContainer.error,
   ]);
 
-  // ============================================
+  
   // HOST: Intercept terminal output and broadcast
-  // ============================================
+  
   useEffect(() => {
     if (!isHost || !terminalRef?.current) return;
 
@@ -204,7 +205,7 @@ export const useCollabWebContainer = ({
       }
     };
 
-    // 3️⃣ Terminal output
+    // Terminal output
     const handleTerminalOutput = (data: {
       sessionId: string;
       data: string;
@@ -232,7 +233,7 @@ export const useCollabWebContainer = ({
       
       console.log("[GUEST] Received initial state:", {
         hasUrl: !!data.serverUrl,
-        serverUrl: data.serverUrl,  //  NEW: Log the actual URL
+        serverUrl: data.serverUrl,  //   Log the actual URL
         isRunning: data.isServerRunning,
         historyLines: data.terminalHistory.length
       });
@@ -263,7 +264,7 @@ export const useCollabWebContainer = ({
     socket.on("webcontainer:terminal", handleTerminalOutput);
     socket.on("webcontainer:initial-sync", handleInitialSync);
 
-    //  FIX: Request initial state immediately AND periodically until received
+    //  Request initial state immediately AND periodically until received
     const requestSync = () => {
       if (!hasReceivedInitialState.current) {
         console.log("📡 [GUEST] Requesting initial state from host");
@@ -293,7 +294,7 @@ export const useCollabWebContainer = ({
     };
   }, [isHost, socket, sessionId, terminalRef]);
 
-  // File Sync: All users can trigger, host executes
+  //  All users can trigger, host executes
  
   const syncFileToContainer = useCallback(
     async (path: string, content: string) => {
@@ -413,7 +414,7 @@ export const useCollabWebContainer = ({
     isServerRunning: isHost 
       ? hostWebContainer.isServerRunning 
       : guestServerUrl !== null,
-    isReady:isHost?hostWebContainer.isReady:true,
+    isReady: isHost ? (hostWebContainer.isReady ?? false) : true,
     terminalHistory,
     startServer,
     restartServer,

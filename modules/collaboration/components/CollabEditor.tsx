@@ -9,7 +9,7 @@ import { RemoteCursor } from "../hooks/useRemoteCursors";
 import "@/modules/collaboration/styles/remote-cursor.css";
 import { useProximityWarnings } from "../hooks/useProximityWarnings";
 import { configureMonaco, getEditorLanguage } from "@/modules/playground/lib/editor-config";
-
+import type { Socket } from "socket.io-client";
 interface CollabEditorProps {
   
   fileId: string;
@@ -43,7 +43,7 @@ class CursorLabelWidget implements editor.IContentWidget {
     this._domNode = document.createElement("div");
     this._domNode.className = `cursorLabel cursorLabel${color}`;
     this._domNode.textContent = userName;
-    // 🔥 FIX: Remove position: absolute from inline styles - let Monaco handle positioning
+    
     this._domNode.style.pointerEvents = "none";
     this._domNode.style.position = "relative"; // Monaco widgets are positioned relative
     this._domNode.style.marginTop = "-24px"; // Push up above the line instead of using absolute positioning
@@ -79,7 +79,7 @@ class CursorLabelWidget implements editor.IContentWidget {
       ],
     };
     
-    // 🔥 FIX: Force Monaco to re-layout the widget at the new position
+    //  Force Monaco to re-layout the widget at the new position
     if (this._editor) {
       this._editor.layoutContentWidget(this);
     }
@@ -187,7 +187,7 @@ export function CollabEditor({
   const cursorUpdateTimeout = useRef<NodeJS.Timeout | null>(null);
   const previousFileId = useRef<string>(fileId);
   
-  // 🔥 FIX: Track if this is the initial mount
+ 
   const isInitialMount = useRef<boolean>(true);
   const currentFileIdRef = useRef<string>(fileId);
   const currentFilePathRef = useRef<string>(filePath);
@@ -232,7 +232,7 @@ export function CollabEditor({
       console.log("✅ Monaco editor mounted for collab");
       configureMonaco(monaco);
       
-      // 🔥 FIX: Set initial language (was missing!)
+      
       updateEditorLanguage();
       onEditorReady?.(editor);
 
@@ -243,11 +243,11 @@ export function CollabEditor({
         setLocalCursorPosition(e.position);
         const currentFileId = currentFileIdRef.current;
         const currentFilePath = currentFilePathRef.current;
-        // 🔥 FIX: Safely check if selection exists and is not empty
+       
         const selection = editor.getSelection();
         const hasSelection = selection ? !selection.isEmpty() : false;
         
-        // 🔥 ADD: Log local cursor movement
+        
         console.log('[Cursor Detection] 📍 Local cursor moved:', {
           line: e.position.lineNumber,
           column: e.position.column,
@@ -267,7 +267,7 @@ export function CollabEditor({
           
           const payload = {
             fileId:currentFileId,
-            filePath:currentFilePath, // ✅ NOW INCLUDED!
+            filePath:currentFilePath, 
             position: {
               lineNumber: e.position.lineNumber,
               column: e.position.column,
@@ -282,11 +282,11 @@ export function CollabEditor({
               : undefined,
           };
 
-          // 🔥 ADD: Log socket emission
+          
           console.log('[Socket Emit] 📤 cursor:move', {
-            sessionId,
+            
             userId,
-            userName,
+            
             ...payload
           });
 
@@ -358,7 +358,7 @@ export function CollabEditor({
       if(shouldShowZones){
       for(let offset = -ZONE_RADIUS; offset <= ZONE_RADIUS; offset++) {
         const zoneClassName = (offset === 0) 
-        ? 'proximity-zone-danger'  // 🔥 Main cursor line = YELLOW DANGER
+        ? 'proximity-zone-danger'  
         : lightClassName;
         const zoneLine = cursor.position.lineNumber + offset;
         if(zoneLine<1)continue;
@@ -409,7 +409,7 @@ export function CollabEditor({
       
       console.log(`🎨 Decorating cursor for ${cursor.userName} at line ${cursor.position.lineNumber} with color ${colorName}, class: ${cursorClassName}`);
       
-      // 🔥 Main cursor decoration - using className which Monaco recognizes
+      
       newDecorations.push({
         range: new monaco.Range(
           cursor.position.lineNumber,
@@ -427,7 +427,7 @@ export function CollabEditor({
         },
       });
 
-      // 🔥 Selection highlight (if exists)
+      
       if (cursor.selection) {
         const selectionClassName = `remoteSelection${capitalizedColor}`;
         newDecorations.push({
@@ -455,7 +455,7 @@ export function CollabEditor({
           cursor.position
         );
         
-        // 🔥 FIX: Pass editor reference so widget can trigger layout updates
+        //  Pass editor reference so widget can trigger layout updates
         widget.setEditor(editor);
         
         // Set position BEFORE adding to editor
@@ -502,7 +502,7 @@ export function CollabEditor({
 
     console.log(`✅ Applied ${newDecorations.length} decorations (replaced ${oldDecorations.length} old ones)`);
     
-    // 🔥 DEBUG: Check if decorations exist in DOM - look in multiple places
+    //  Check if decorations exist in DOM - look in multiple places
     setTimeout(() => {
       const decorationElements = document.querySelectorAll('[class*="remoteCursor"]');
       const glyphElements = document.querySelectorAll('[class*="cursorGlyph"]');
@@ -550,7 +550,7 @@ export function CollabEditor({
     }, 100);
   }, [remoteCursors,localCursorPosition]);
 
-  // 🔥 FIX: Listen for remote changes
+  //  Listen for remote changes
   useEffect(() => {
     if (!socket) return;
 
@@ -609,7 +609,7 @@ export function CollabEditor({
     };
   }, [socket, fileId, userId]);
 
-  // 🔥 FIX: Only update editor when switching files, NOT on every content change
+  // Only update editor when switching files, NOT on every content change
   useEffect(() => {
     // Check if the file has actually changed
     const fileChanged = previousFileId.current !== fileId;
@@ -650,7 +650,7 @@ export function CollabEditor({
         }, 50);
       }
     }
-  }, [fileId, initialContent]); // ✅ Now also depends on initialContent for external updates
+  }, [fileId, initialContent]); 
 
   useEffect(() => {
     return () => {

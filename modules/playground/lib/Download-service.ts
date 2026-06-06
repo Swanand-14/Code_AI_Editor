@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import { TemplateFolder } from "@/modules/playground/lib/path-to-json";
-import { TemplateFile } from "@prisma/client";
+import type { TemplateFile } from "@/modules/playground/lib/path-to-json";
 
 type TreeItem = TemplateFile | TemplateFolder;
 

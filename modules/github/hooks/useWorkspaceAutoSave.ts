@@ -7,7 +7,7 @@ interface AutosaveOptions {
   repoFullName: string;
   currentBranch: string;
   enabled: boolean;
-  intervalMs?: number; // Default: 10000 (10 seconds)
+  intervalMs?: number; 
   sessionId?:string
 }
 

@@ -1,15 +1,9 @@
 import { create } from 'zustand';
 import { toast } from 'sonner';
 import { WebContainer } from '@webcontainer/api';
+import { GitHubFile } from '../types';
 
-export interface GitHubFile {
-  name: string;
-  path: string;
-  sha: string;
-  size: number;
-  type: "file" | "dir";
-  content?: string;
-}
+
 interface OpenFile {
   path: string;
   content: string;

@@ -30,7 +30,7 @@ export interface RepoCreationData {
   description: string
   isPrivate: boolean
   initializeWithReadme: boolean
-  addGitignore: boolean
+  addGitIgnore: boolean
 }
 
 export function CreateGithubRepoDialog({
@@ -49,7 +49,7 @@ export function CreateGithubRepoDialog({
   const [description, setDescription] = useState("")
   const [isPrivate, setIsPrivate] = useState(false)
   const [initializeWithReadme, setInitializeWithReadme] = useState(true)
-  const [addGitignore, setAddGitignore] = useState(true)
+  const [addGitIgnore, setAddGitignore] = useState(true)
   const [nameError, setNameError] = useState<string>("")
 
   // Validate name when it changes
@@ -74,7 +74,7 @@ export function CreateGithubRepoDialog({
         description,
         isPrivate,
         initializeWithReadme,
-        addGitignore,
+        addGitIgnore,
       })
       onOpenChange(false)
     } catch (error) {
@@ -193,7 +193,7 @@ export function CreateGithubRepoDialog({
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="gitignore"
-                checked={addGitignore}
+                checked={addGitIgnore}
                 onCheckedChange={(checked) => setAddGitignore(checked as boolean)}
                 disabled={isCreating}
               />

@@ -18,7 +18,7 @@ error:string|null;
 loadPlayground:()=>Promise<void>;
 saveTemplateData:(data:TemplateFolder)=>Promise<TemplateFolder|null>;
 }
-//@ts-ignore
+
 export const usePlayground = (id:string):UsePlaygroundReturn => {
     const [playgroundData,setPlaygroundData] = useState<PlaygroundData|null>(null);
     const [templateData,setTemplateData] = useState<TemplateFolder|null>(null);
@@ -51,14 +51,14 @@ export const usePlayground = (id:string):UsePlaygroundReturn => {
         }
         const templateRes = await res.json()
         if(templateRes.templateJson && Array.isArray(templateRes.templateJson)){
-            // 🔥 FIX: Enrich with path information
+            //  Enrich with path information
             const enrichedTemplate = enrichTemplateWithPaths({
                 folderName:"Root",
                 items:templateRes.templateJson,
             });
             setTemplateData(enrichedTemplate);
         }else{
-            // 🔥 FIX: Enrich with path information
+            //  Enrich with path information
             const enrichedTemplate = enrichTemplateWithPaths(templateRes.templateJson || {
                 folderName:"Root",
                 items:[],

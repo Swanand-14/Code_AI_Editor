@@ -72,13 +72,13 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
     console.log("   userName:", userName);
     console.log("   sessionId:", sessionId);
 
-    // 🔥 CRITICAL FIX: Don't connect if userId/userName not ready
+    //  Don't connect if userId/userName not ready
     if (!userId || !userName || userName === "Anonymous") {
       console.warn("⏳ Waiting for auth data...");
       return;
     }
 
-    // 🔥 CRITICAL FIX: Prevent duplicate connections
+    //  Prevent duplicate connections
     if (socketRef.current?.connected) {
       console.log("♻️ Socket already connected, skipping");
       return;
@@ -131,7 +131,7 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
     socketInstance.on("collab:user-joined", (data: { userId: string; userName: string }) => {
       console.log("👤 User joined:", data.userName);
       setParticipants((prev) => {
-        // 🔥 FIX: Check if already exists
+        //  Check if already exists
         if (prev.some(p => p.userId === data.userId)) {
           console.log("⚠️ User already in list, skipping");
           return prev;
@@ -171,7 +171,7 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
       console.warn('[Socket] ⚠️ Cannot emit cursor: socket not connected');
       return;
     }
-  // 🔥 ADD: Validation
+  //  Validation
   if (!payload.fileId || !payload.filePath) {
     console.warn('[Socket] ⚠️ Cannot emit cursor: missing fileId or filePath');
     return;
@@ -184,7 +184,7 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
     userName 
   };
 
-  // 🔥 ADD: Log emission
+  
   console.log('[Socket Emit] 📤 cursor:move', {
     sessionId,
     userId,

@@ -70,15 +70,9 @@ import { useRemoteCursors } from "../hooks/useRemoteCursors";
 import { useProximityWarnings } from "../hooks/useProximityWarnings";
 import { editor } from "monaco-editor";
 import { set } from "zod";
+import type {GitHubFile} from "../../github/types";
 
-interface GitHubFile {
-  name: string;
-  path: string;
-  sha: string;
-  type: "file" | "dir";
-  size: number;
-  content?: string;
-}
+
 
 
 interface GitHubCollabPlaygroundProps {
@@ -87,18 +81,13 @@ interface GitHubCollabPlaygroundProps {
 
 export function GitHubCollabPlayground({ session }: GitHubCollabPlaygroundProps) {
  
-  const [user, setUser] = useState<{
-    id: string;
-    name: string;
-    image?: string;
-  } | null>(null);
-    const [isJoining, setIsJoining] = useState(true);
+  const [user, setUser] = useState<{ id: string; name: string; image?: string | null } | null>(null);
   const [joinError, setJoinError] = useState<string | null>(null);
-
+  const [isJoining, setIsJoining] = useState(true);
   // Derived: is this user the session host?
   const isHost = !!user && user.id === session.hostId;
 
-  // ── UI state ────────────────────────────────────────────────────────────
+  
   const [showSourceControl, setShowSourceControl] = useState(false);
   const [newFileDialogOpen, setNewFileDialogOpen] = useState(false);
   const [newFolderDialogOpen, setNewFolderDialogOpen] = useState(false);
@@ -110,6 +99,7 @@ export function GitHubCollabPlayground({ session }: GitHubCollabPlaygroundProps)
     path: string;
     name: string;
   } | null>(null);
+
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(
     new Set([""])
   );
@@ -196,11 +186,12 @@ const hostNotPresentRef = useRef(false);
   } = useWebContainerForGithub({
     files,
     repoFullName: `${session.repoOwner}/${session.repoName}`,
-    currentBranch: session.branch,
+    currentBranch: session.branch??"main",
     terminalRef,
     autoStart: false,
      
   });
+
   const {
     broadcastContentChange,
     broadcastFileCreate,
@@ -255,7 +246,7 @@ useProximityWarnings({
         session.branch
       );
 
-      if (result.success) {
+      if (result.success && result.data) {
        const filesWithContent = await Promise.all(
           result.data.map(async (file: GitHubFile) => {
             if (file.type === "file") {
@@ -915,8 +906,8 @@ useEffect(() => {
           toast.success(`Committed ${changes.length} file(s)`);
           initializeWorkspace(
             `${session.repoOwner}/${session.repoName}`,
-            session.branch,
-            result.updatedFiles
+            session.branch?? "main",
+            result.updatedFiles??[]
           );
           await loadRepositoryTree();
         } else {
@@ -1340,9 +1331,8 @@ useEffect(() => {
                 />
               ) : activeFile ? (
                 <CollabEditor
-  sessionId={session.sessionId}
+  
   userId={user?.id}
-  userName={user?.name || "Anonymous"}
   fileId={activeFile.sha || activeFile.path}
   filePath={activeFile.path}
   initialContent={activeFile.content}
@@ -1351,6 +1341,10 @@ useEffect(() => {
   remoteCursors={CursorsInCurrentFile}
   onCursorPositionChange={setLocalCursorPosition}
   onEditorReady={(editorInstance) => { editorInstanceRef.current = editorInstance; }}
+  isConnected={isConnected}
+  emitCursorMove={emitCursorMove}
+  emitEditorChange={(payload) => broadcastContentChange(payload.filePath, payload.fileId, payload.content)}
+  socket={socket}
 />
               ) : (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground">

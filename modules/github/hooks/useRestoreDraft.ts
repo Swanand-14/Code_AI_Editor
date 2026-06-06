@@ -37,15 +37,19 @@ export function useRestoreDraft() {
       }
       
       const draft = result.data;
+      const modifiedFiles = Array.isArray(draft.modifiedFiles) ? draft.modifiedFiles as any[] : [];
+      const createdFiles = Array.isArray(draft.createdFiles) ? draft.createdFiles as any[] : [];
+      const deletedFiles = Array.isArray(draft.deletedFiles) ? draft.deletedFiles as any[] : [];
       if(draft.branch !== branch) {
         console.warn(`⚠️ [Draft] Draft branch (${draft.branch}) does not match current branch (${branch})`);
         setIsRestoring(false);
         return false;
       }
+      
       const totalChanges = 
-        draft.modifiedFiles.length + 
-        draft.createdFiles.length + 
-        draft.deletedFiles.length;
+        modifiedFiles.length + 
+        createdFiles.length + 
+        deletedFiles.length;
       
       console.log(`📂 [Draft] Found draft with ${totalChanges} changes`);
       
@@ -57,13 +61,13 @@ export function useRestoreDraft() {
       });
       
       // Restore modified files to WebContainer
-      for (const file of draft.modifiedFiles) {
+      for (const file of modifiedFiles) {
         // await syncFileToWebContainer(file.path, file.content, webContainerInstance);
         markFileModified(file.path,file.content);
       }
       
       // Restore created files to WebContainer
-      for (const file of draft.createdFiles) {
+      for (const file of createdFiles) {
         // await syncFileToWebContainer(file.path, file.content, webContainerInstance);
         addFileToTree({
           name:file.path.split('/').pop() || file.path,
@@ -77,7 +81,7 @@ export function useRestoreDraft() {
       }
       
       // Mark deleted files (don't delete from WebContainer yet)
-      for (const path of draft.deletedFiles) {
+      for (const path of deletedFiles) {
         removeFileFromTree(path);
         markFileDeleted(path);
 
@@ -85,7 +89,7 @@ export function useRestoreDraft() {
       
       console.log(`✅ [Draft] Restored ${totalChanges} changes`);
        if (webContainerInstance) {
-      for (const file of [...draft.modifiedFiles, ...draft.createdFiles]) {
+      for (const file of [...modifiedFiles, ...createdFiles]) {
         await syncFileToWebContainer(file.path, file.content, webContainerInstance)
       }
     }

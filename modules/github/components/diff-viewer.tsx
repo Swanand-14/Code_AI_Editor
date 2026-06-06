@@ -1,9 +1,11 @@
 "use client"
 import { useEffect, useState, useRef } from "react"
-import { X, GitCompare, ChevronDown, ChevronUp,Minus,Plus,Badge,Check } from "lucide-react"
+import { X, GitCompare, ChevronDown, ChevronUp,Minus,Plus,Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { computeDiff, groupDiffBlocks, getDiffStats, DiffLine, DiffBlock } from "../lib/diff-utils"
 import { useGitWorkspace } from "../hooks/Usegitworkspace"
+
+import { Badge } from "@/components/ui/badge"
 
 
 interface DiffViewerProps{
@@ -20,7 +22,7 @@ export function DiffViewer({originalContent,modifiedContent,filepath,onClose,sho
     const [block,setBlocks] = useState<DiffBlock[]>([])
     const [collapsedBlocks,setCollapsedBlocks] = useState<Set<number>>(new Set())
     const leftScrollRef = useRef<HTMLDivElement>(null)
-    const rightScrollRef = useRef<HTMLAnchorElement>(null)
+    const rightScrollRef = useRef<HTMLDivElement>(null)
     const isScrolling = useRef(false)
     const {stagedFiles,stageFile,unstageFile} = useGitWorkspace()
     const isStaged = stagedFiles.has(filepath)
@@ -242,7 +244,7 @@ interface DiffLineViewProps {
 function DiffLineView({ line, side }: DiffLineViewProps) {
   const isOriginal = side === 'original'
   const content = isOriginal ? line.original : line.modified
-  const lineNum = isOriginal ? line.origLineNum : line.modLineNum
+  const lineNum = isOriginal ? line.originalLineNum : line.modLineNum
 
   // Determine styling based on line type
   let bgColor = ''

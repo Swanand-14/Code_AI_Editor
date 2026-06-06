@@ -102,10 +102,10 @@ export async function linkRepositoryToUser(repoFullName: string, repoId: number,
     })
     
     revalidatePath("/dashboard")
-    return { success: true } // ✅ Added explicit return
+    return { success: true } 
   } catch (error: any) {
     console.error("Error linking repository to user:", error)
-    return { success: false, error: error.message || "Failed to link repository" } // ✅ Fixed: was missing return
+    return { success: false, error: error.message || "Failed to link repository" } 
   }
 }
 
@@ -367,7 +367,7 @@ export async function commitAllChangesToGitHub(
     const token = await requireGitHubToken()
     const githubClient = new GitHubClient(token)
 
-    // ✅ STEP 1: Deduplicate changes — if a file appears multiple times, keep last entry
+    //  STEP 1: Deduplicate changes — if a file appears multiple times, keep last entry
     const deduplicatedMap = new Map<string, FileChange>()
     for (const change of changes) {
       deduplicatedMap.set(change.path, change)
@@ -375,7 +375,7 @@ export async function commitAllChangesToGitHub(
     const deduplicatedChanges = Array.from(deduplicatedMap.values())
     console.log(`📦 [Commit] After dedup: ${deduplicatedChanges.length} unique files (was ${changes.length})`)
 
-    // ✅ STEP 2: Get branch → extract BOTH SHAs correctly
+    //  STEP 2: Get branch → extract BOTH SHAs correctly
     // getBranch returns: { commit: { sha: "COMMIT_SHA", commit: { tree: { sha: "TREE_SHA" } } } }
     const branchData = await githubClient.getBranch(owner, repo, branch)
 
@@ -394,7 +394,7 @@ export async function commitAllChangesToGitHub(
       throw new Error('Could not get base tree SHA from branch data. Branch data: ' + JSON.stringify(branchData.commit.commit))
     }
 
-    // ✅ STEP 3: Fetch base tree entries for proper tree reconstruction
+    //  STEP 3: Fetch base tree entries for proper tree reconstruction
     console.log(`📂 [Commit] Fetching base tree entries...`)
     const baseTreeEntries = await githubClient.getTreeEntries(owner, repo, baseTreeSha)
     console.log(`📂 [Commit] Base tree has ${baseTreeEntries.length} entries`)
@@ -416,7 +416,7 @@ console.log(`📂 [Commit] Blob entries: ${blobEntries.length}`)
 
     console.log(`🗑️ [Commit] Deleting ${deletedPaths.size} files`)
 
-    // ✅ STEP 4: Create blobs for modified/created files (sequentially to avoid rate limits)
+    //  STEP 4: Create blobs for modified/created files (sequentially to avoid rate limits)
     const filesToUpload = deduplicatedChanges.filter(
       c => c.type !== 'deleted' && c.content !== undefined
     )
@@ -434,7 +434,7 @@ console.log(`📂 [Commit] Blob entries: ${blobEntries.length}`)
       blobMap.set(change.path, blob.sha)
     }
 
-    // ✅ STEP 5: Build complete tree by merging base tree with changes
+    //  STEP 5: Build complete tree by merging base tree with changes
     const treeEntries: Array<{
       path: string
       mode: '100644' | '100755' | '040000'
@@ -479,26 +479,26 @@ console.log(`📂 [Commit] Blob entries: ${blobEntries.length}`)
 
     console.log(`🌳 [Commit] Building complete tree with ${treeEntries.length} entries`)
 
-    // ✅ STEP 6: Create tree (without base_tree to avoid BadObjectState errors)
+    //  STEP 6: Create tree (without base_tree to avoid BadObjectState errors)
     const tree = await githubClient.createTreeDirect(owner, repo, treeEntries)
 
     console.log(`🌳 [Commit] Created new tree: ${tree.sha.substring(0, 7)}`)
 
-    // ✅ STEP 5: Create commit
+    //  STEP 5: Create commit
     const commit = await githubClient.createCommit(owner, repo, {
       message,
       tree: tree.sha,
       parents: [currentCommitSha],
     })
 
-    console.log(`✅ [Commit] Created commit: ${commit.sha.substring(0, 7)}`)
+    console.log(` [Commit] Created commit: ${commit.sha.substring(0, 7)}`)
 
-    // ✅ STEP 6: Update the branch ref
+    //  STEP 6: Update the branch ref
     await githubClient.updateRef(owner, repo, `heads/${branch}`, commit.sha)
 
     console.log(`🎯 [Commit] Branch "${branch}" updated successfully`)
 
-    // ✅ STEP 7: Fetch updated file tree for store re-initialization
+    //  STEP 7: Fetch updated file tree for store re-initialization
     const updatedTree = await githubClient.getRepoTree(owner, repo, branch)
 
     const filesWithContent = await Promise.all(
@@ -515,7 +515,7 @@ console.log(`📂 [Commit] Blob entries: ${blobEntries.length}`)
       })
     )
 
-    console.log(`✅ [Commit] Done! ${deduplicatedChanges.length} files committed.`)
+    console.log(` [Commit] Done! ${deduplicatedChanges.length} files committed.`)
 
     return {
       success: true,

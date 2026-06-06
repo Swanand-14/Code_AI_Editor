@@ -7,7 +7,7 @@ import { TemplateFolder } from "@/modules/playground/lib/path-to-json";
 export async function createCollabWorkspace(data: {
   sessionId: string;
   name: string;
-  templateData: TemplateFolder; // 🔥 Simple - entire template object
+  templateData: TemplateFolder; 
 }): Promise<{ success: boolean; workSpaceId?: string; error?: string }> {
   try {
     const user = await currentUser();
@@ -17,7 +17,7 @@ export async function createCollabWorkspace(data: {
 
     console.log("📥 Creating workspace:", data.sessionId);
 
-    // 🔥 SIMPLE: Just like TemplateFile - stringify and store
+    // Just like TemplateFile - stringify and store
     const workspace = await prisma.collabWorkspace.create({
       data: {
         name: data.name,
@@ -41,7 +41,7 @@ export async function updateCollabWorkspace(data: {
   userId?: string;
 }): Promise<{ success: boolean; error?: string }> {
   try {
-    // 🔥 SIMPLE: Just like your SaveUpdatedCode
+    //  Just like your SaveUpdatedCode
     await prisma.collabWorkspace.update({
       where: { sessionId: data.sessionId },
       data: {
@@ -81,7 +81,7 @@ export async function getAllCollabWorkspaces():Promise<CollabWorkspaceRow[]> {
     if (!user?.id) return [];
 
     const workspaces = await prisma.collabWorkspace.findMany({
-      where: { ownerId: user.id ,templateData: { not: null }},
+      where: { ownerId: user.id },
       
       orderBy: { updatedAt: "desc" },
     });
@@ -114,7 +114,7 @@ export async function getAllCollabWorkspaces():Promise<CollabWorkspaceRow[]> {
         lastSavedAt: w.lastSavedAt,
         createdAt: w.createdAt,
         owner: {
-          id: user.id,
+          id: user.id!,
           name: user.name ?? "",
           image: user.image,
         },

@@ -10,8 +10,9 @@ import { LoadingStep } from "@/modules/playground/components/loader";
 import { currentUser } from "@/modules/auth/actions";
 import { CollabEditor } from "./CollabEditor";
 import React from "react";
-import { TemplateFile } from "@prisma/client";
+
 import { enrichTemplateWithPaths } from "@/modules/playground/lib";
+import type { TemplateFile } from "@/modules/playground/lib/path-to-json";
 import { TemplateFolder } from "@/modules/playground/lib/path-to-json";
 import { getCollabWorkspaceBySession, updateCollabWorkspace } from "../workspaces/actions";
 import { SidebarProvider } from "@/components/ui/sidebar";
@@ -31,7 +32,7 @@ import {
 import { useWorkspaceAutoSave } from "../hooks/useWorkspaceAutoSave";
 import { webContainerService } from "@/modules/webContainers/services/webContainer-services";
 
-// 🔥 NEW: Import WebContainer components
+
 import { useCollabWebContainer } from "@/modules/webContainers/hooks/useCollabWebContainer";
 import { WebContainerPreview } from "@/modules/webContainers/components/WebContainerPreview";
 import { HostOfflineBanner } from "./HostOfflineBanner";
@@ -52,7 +53,7 @@ interface CollabPlaygroundProps {
 export function CollabPlayground({ session }: CollabPlaygroundProps) {
   const [isJoining, setIsJoining] = useState(true);
   const [joinError, setJoinError] = useState<string | null>(null);
-  const [user, setUser] = useState<{ id: string; name: string,image?:string } | null>(null);
+  const [user, setUser] = useState<{ id: string; name: string,image?:string | null } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [localCursorPosition,setLocalCursorPosition] = useState<{lineNumber:number;column:number}>({lineNumber:1,column:1});
   const [followingUserId, setFollowingUserId] = useState<string | null>(null);
@@ -137,7 +138,7 @@ useProximityWarnings({
   enabled: true, // Set to false to disable warnings
 });
 
-// 🔥 NEW: Auto-start server when BOTH WebContainer AND Terminal are ready (HOST ONLY)
+// Auto-start server when BOTH WebContainer AND Terminal are ready (HOST ONLY)
 useEffect(() => {
   console.log("🔄 [COLLAB] Auto-start useEffect triggered", {
     isHost,
@@ -254,7 +255,7 @@ useEffect(() => {
         setTemplateData(updatedTemplate);
       }
 
-      // 🔥 Update open files (if the file is open)
+      // Update open files (if the file is open)
       const currentOpenFiles = useFileExplorer.getState().openFiles;
       if (Array.isArray(currentOpenFiles)) {
         const fileIsOpen = currentOpenFiles.some((f) => f.id === payload.fileId);
@@ -321,7 +322,7 @@ useEffect(() => {
             case "delete":
               toast.info(`${payload.userName} ${payload.isFolder ? 'deleted folder' : 'deleted file'}: ${fileName}`);
 
-              // 🔥 Close the file if it's currently open
+              // Close the file if it's currently open
               const currentOpenFiles = useFileExplorer.getState().openFiles;
               const fileToClose = currentOpenFiles.find((f) =>
                 `${f.path}/${f.filename}.${f.fileExtension}`.replace(/^\//, '') === payload.filePath
@@ -354,7 +355,7 @@ useEffect(() => {
 
   
 
-  // 🔥 Save function similar to main playground
+  // Save function similar to main playground
   const saveCollabWorkspace = useCallback(
     async (updatedTemplate: TemplateFolder) => {
       try {
@@ -421,7 +422,7 @@ useEffect(() => {
       console.log("🆔 [Collab] Generated proper fileId:", properFileId);
       setTemplateData(updatedTemplateData);
       
-      // 🔥 CRITICAL: Broadcast to other collaborators via socket
+      //  Broadcast to other collaborators via socket
       if (socket) {
         socket.emit("editor:change", {
           userId: user?.id,
@@ -472,7 +473,7 @@ useEffect(() => {
   };
 }, [webContainer.instance, templateData, openFiles, setTemplateData, saveCollabWorkspace, setOpenFiles, socket, user]);
 
-  // 🔥 Wrapped handlers (same pattern as main playground)
+  //  Wrapped handlers (same pattern as main playground)
   const wrappedHandleAddFile = useCallback(
     async (newFile: TemplateFile, parentPath: string) => {
       const filePath = parentPath
@@ -495,7 +496,7 @@ useEffect(() => {
         saveCollabWorkspace
       );
 
-      // 🔥 Emit file creation to other participants
+      //  Emit file creation to other participants
       
 
       emitFileAction({
@@ -531,7 +532,7 @@ useEffect(() => {
         saveCollabWorkspace
       );
 
-      // 🔥 Emit folder creation to other participants
+      //  Emit folder creation to other participants
      
 
       emitFileAction({
@@ -551,7 +552,7 @@ useEffect(() => {
     async (file: TemplateFile, parentPath: string) => {
       const result = await handleDeleteFile(file, parentPath, webContainer.instance,saveCollabWorkspace);
 
-      // 🔥 Emit file deletion to other participants
+      //  Emit file deletion to other participants
       const filePath = parentPath
         ? `${parentPath}/${file.filename}.${file.fileExtension}`
         : `${file.filename}.${file.fileExtension}`;
@@ -575,7 +576,7 @@ useEffect(() => {
     async (folder: TemplateFolder, parentPath: string) => {
       const result = await handleDeleteFolder(folder, parentPath, webContainer.instance,saveCollabWorkspace);
 
-      // 🔥 Emit folder deletion to other participants
+      // Emit folder deletion to other participants
       const folderPath = parentPath
         ? `${parentPath}/${folder.folderName}`
         : folder.folderName;
@@ -628,7 +629,7 @@ useEffect(() => {
         saveCollabWorkspace
       );
 
-      // 🔥 Emit file rename to other participants
+      //  Emit file rename to other participants
       emitFileAction({
         action: "rename",
         filePath: oldPath,
@@ -687,7 +688,7 @@ useEffect(() => {
         saveCollabWorkspace
       );
 
-      // 🔥 Emit folder rename to other participants
+      //Emit folder rename to other participants
       emitFileAction({
         action: "rename",
         filePath: oldPath,
@@ -701,23 +702,25 @@ useEffect(() => {
     [handleRenameFolder, saveCollabWorkspace, emitFileAction,webContainer.instance]
   );
 
-  // 🔥 File selection handler
+  //  File selection handler
   const handleFileSelect = useCallback(
     (file: TemplateFile & { path?: string }) => {
       console.log("📄 File selected:", file);
 
       openFile(file);
+      const currentTemplate = useFileExplorer.getState().templateData;
+      const fileId = generateFileId(file, currentTemplate!);
 
       const filePath = `${file.path || ""}/${file.filename}.${file.fileExtension}`.replace(
         /^\//, ""
       );
-      emitFileOpen(file.id, filePath);
+      emitFileOpen(fileId, filePath);
       updateActivity(filePath);
     },
     [openFile, emitFileOpen]
   );
 
-  // 🔥 Content change handler - Now syncs with socket AND WebContainer
+  //  Content change handler - Now syncs with socket AND WebContainer
   const handleFileContentChange = useCallback(
     (fileId: string, newContent: string) => {
       console.log("✏️ Content changed for file:", fileId);
@@ -725,7 +728,7 @@ useEffect(() => {
       // Update local Zustand state
       updateFileContent(fileId, newContent);
 
-      // 🔥 CRITICAL: Also update the template data immediately
+      //  CRITICAL: Also update the template data immediately
       const currentTemplate = useFileExplorer.getState().templateData;
       if (currentTemplate) {
         const updatedTemplate = JSON.parse(JSON.stringify(currentTemplate));
@@ -750,7 +753,7 @@ useEffect(() => {
         updatedTemplate.items = updateFileInTree(updatedTemplate.items);
         setTemplateData(updatedTemplate);
 
-        // 🔥 NEW: Sync to WebContainer
+        //  NEW: Sync to WebContainer
         const file = openFiles.find(f => f.id === fileId);
         if (file) {
           const filePath = `/${file.path || ""}/${file.filename}.${file.fileExtension}`.replace(/^\/+/, '/');
@@ -763,7 +766,7 @@ useEffect(() => {
     [updateFileContent, setTemplateData, openFiles, webContainer]
   );
 
-  // 🔥 Save current file
+  //  Save current file
   const handleSave = useCallback(async () => {
     if (!activeFileId || !templateData) {
       toast.error("No active file to save");
@@ -813,7 +816,7 @@ useEffect(() => {
     setOpenFiles,
   ]);
 
-  // 🔥 Save all files
+  //  Save all files
   const handleSaveAll = useCallback(async () => {
     const unsavedFiles = openFiles.filter((f) => f.hasUnsavedChanges);
     if (unsavedFiles.length === 0) {
@@ -848,7 +851,7 @@ useEffect(() => {
     }
   }, [openFiles, templateData, saveCollabWorkspace, setOpenFiles]);
 
-  // 🔥 Keyboard shortcuts
+  //  Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === "s") {
@@ -973,10 +976,8 @@ useEffect(() => {
       const fileName = filePath.split('/').pop() || '';
       const [filename, ...ext] = fileName.split('.');
       await handleAddFile({
-        id: '', filename, fileExtension: ext.join('.') || 'txt', content,
-        playgroundId: session.sessionId, folderId: null,
-        createdAt: new Date(), updatedAt: new Date(),
-      }, parentPath, async () => {}, webContainer.instance, saveCollabWorkspace);
+         filename, fileExtension: ext.join('.') || 'txt', content,
+        }, parentPath, async () => {}, webContainer.instance, saveCollabWorkspace);
       emitFileAction({ action: "create", filePath, content });
       toast.success(`📄 Created ${fileName}`);
     } catch (err) { console.error(err); }
@@ -1091,7 +1092,7 @@ useEffect(() => {
   window.addEventListener('keydown', handleEsc);
   return () => window.removeEventListener('keydown', handleEsc);
 }, [followingUserId]);
-  // 🔥 Initialize
+  //  Initialize
   useEffect(() => {
     let mounted = true;
 
