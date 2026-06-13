@@ -61,7 +61,7 @@ export function useCollabSocket(sessionId: string, userId?: string, userName?: s
   const [isConnected, setIsConnected] = useState(false);
   const [participants, setParticipants] = useState<CollabUser[]>([]);
   const recentActivityIds = useRef<Set<string>>(new Set());
-  const hasRequestedInitialData = useRef(false); // 🔥 NEW: Prevent double request
+  const hasRequestedInitialData = useRef(false); 
 
   const socketRef = useRef<Socket | null>(null);
   const hasJoinedRef = useRef(false);

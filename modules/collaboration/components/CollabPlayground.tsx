@@ -204,14 +204,14 @@ useEffect(() => {
   };
 }, [isHost, webContainer.isReady, isReadyTerminal, webContainer.isServerRunning, webContainer.startServer, terminalRef]);
 
-// 🔥 DEBUG: Log when cursors update
+
 useEffect(() => {
   if (CursorsInCurrentFile.length > 0) {
     console.log("👥 Remote cursors in current file:", CursorsInCurrentFile);
   }
 }, [CursorsInCurrentFile]);
 
-  // 🔥 NEW: Listen for remote editor changes at the parent level
+  
   useEffect(() => {
     if (!socket) return;
 

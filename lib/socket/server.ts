@@ -174,7 +174,7 @@ function addParticipant(sessionId: string, participant: ParticipantInfo): boolea
       return false;
     }
   }
-  // 🔥 FIX: Use userId as key (prevents duplicates)
+  // Use userId as key (prevents duplicates)
   participants.set(participant.userId, participant);
   
   console.log(`✅ Participant added: ${participant.userName} (${participant.userId})`);
@@ -382,7 +382,7 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
                     sessionId: true,
                     isActive: true,
                     expiresAt: true,
-                    hostId: true, // 🔥 NEW: Get host ID
+                    hostId: true, 
                   }
                 });
 
@@ -421,17 +421,7 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
                   include: { user: { select: { id: true, name: true, image: true } } },
                 });
 
-                // Notify user they joined successfully
-                socket.emit("collab:joined", {
-                  sessionId,
-                  participants: participants.map((p) => ({
-                    userId: p.userId,
-                    userName: p.user?.name || p.displayName || "Anonymous",
-                    userImage: p.user?.image,
-                    role: p.role,
-                    joinedAt: p.joinedAt,
-                  })),
-                });
+                
 
                 const isHost = session.hostId === userId;
                 const role = isHost ? "Host" : "Guest";
@@ -457,6 +447,17 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
 }
 //Bug is fixed ,firstly host presence is checked then user is allowed to join the session and socket.join is called after that. This ensures that the host is present in the room before any guest can join, preventing the issue of guests being able to join before the host and then being blocked when the host finally joins.
 socket.join(sessionId);
+// Notify user they joined successfully
+                socket.emit("collab:joined", {
+                  sessionId,
+                  participants: participants.map((p) => ({
+                    userId: p.userId,
+                    userName: p.user?.name || p.displayName || "Anonymous",
+                    userImage: p.user?.image,
+                    role: p.role,
+                    joinedAt: p.joinedAt,
+                  })),
+                });
 
                 console.log(`🎭 Role determined: ${role} (hostId: ${session.hostId}, userId: ${userId})`);
                 const userWithImage = await prisma.user.findUnique({
@@ -576,9 +577,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
 
 
 
-        // ============================================
-        // COLLAB: Editor & File Operations
-        // ============================================
+       
         socket.on("editor:change", (payload: EditorChangePayload) => {
           if (!socket.sessionId) return;
 
