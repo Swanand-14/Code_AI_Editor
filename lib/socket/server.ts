@@ -100,7 +100,7 @@ type SerializedParticipant = {
 
 
 
-// 🔥 NEW: WebContainer state management
+
 interface WebContainerState {
   hostSocketId: string | null;
   hostUserId: string | null;
@@ -624,16 +624,15 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
     session: socket.sessionId
   });
 
-  // 🔥 FIX: Use consistent event name "collab:remote-cursor"
-  // 🔥 FIX: Include filePath in broadcast
+  
   socket.to(socket.sessionId).emit("collab:remote-cursor", {
     userId: socket.userId,
     userName: socket.userName,
     fileId: payload.fileId,
-    filePath: payload.filePath, // ✅ Now included!
+    filePath: payload.filePath, 
     position: payload.position,
     selection: payload.selection,
-    timestamp: Date.now() // ✅ Added for staleness detection
+    timestamp: Date.now()
   });
 
   console.log(`[Server] 📡 Broadcasted cursor to session ${socket.sessionId} (excluding ${socket.userName})`);
@@ -676,7 +675,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
         socket.on("file:open", (payload: { fileId: string; filePath: string }) => {
   if (!socket.sessionId || !socket.userId) return;
 
-  // 🔥 NEW: Update participant's active file
+  
   const participants = sessionParticipants.get(socket.sessionId);
   if (participants) {
     const participant = participants.get(socket.userId);
@@ -686,7 +685,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
       
       console.log(`📂 ${socket.userName} opened: ${payload.filePath}`);
       
-      // 🔥 Broadcast updated participant info
+      
       socket.to(socket.sessionId).emit("collab:participant-activity", {
         userId: socket.userId,
         userName: socket.userName,
@@ -716,9 +715,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           });
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - Server Ready
-        // ============================================
+       
         socket.on("webcontainer:server-ready", (data: {
           sessionId: string;
           serverUrl: string;
@@ -756,9 +753,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           console.log(`✅ Broadcasted server URL to session ${data.sessionId}`);
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - State Updates
-        // ============================================
+        
         socket.on("webcontainer:state", (data: {
           sessionId: string;
           isLoading: boolean;
@@ -777,9 +772,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           socket.to(data.sessionId).emit("webcontainer:state", data);
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - Terminal Output
-        // ============================================
+  
         socket.on("webcontainer:terminal", (data: {
           sessionId: string;
           data: string;
@@ -799,9 +792,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           socket.to(data.sessionId).emit("webcontainer:terminal", data);
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - Request Initial Sync
-        // ============================================
+      
         socket.on("webcontainer:request-sync", (data: {
           sessionId: string;
         }) => {
@@ -832,9 +823,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           }
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - File Sync Request (Guest → Host)
-        // ============================================
+       
         socket.on("webcontainer:file-sync", (data: {
           sessionId: string;
           path: string;
@@ -860,9 +849,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           }
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - Sync Error
-        // ============================================
+        
         socket.on("webcontainer:sync-error", (data: {
           sessionId: string;
           path: string;
@@ -872,9 +859,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           socket.to(data.sessionId).emit("webcontainer:sync-error", data);
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - Command (for future extensibility)
-        // ============================================
+       
         socket.on("webcontainer:command", (data: {
           sessionId: string;
           userId: string;
@@ -934,9 +919,7 @@ socket.on("workspace:snapshot", (data: {
   console.log(`✅ [SERVER] Snapshot delivered to ${data.requesterSocketId}`);
 });
 
-        // ============================================
-        // DISCONNECT - Cleanup
-        // ============================================
+      
         socket.on("disconnect", async () => {
   console.log("\n🔌 DISCONNECT:", socket.id);
   console.log("   userId:", socket.userId);
@@ -944,12 +927,12 @@ socket.on("workspace:snapshot", (data: {
   console.log("   sessionId:", socket.sessionId);
 
   if (socket.sessionId && socket.userId) {
-    // 🔥 CRITICAL: Check if this was the last connection
+    
     const { participant, wasLastConnection } = removeParticipant(socket.sessionId, socket.id);
     
     if (participant) {
       if (wasLastConnection) {
-        // 🔥 Only log "left" activity if ALL connections closed
+        
         console.log(`👋 ${participant.userName} fully disconnected (all tabs closed)`);
         
         const activityEntry = logActivity(

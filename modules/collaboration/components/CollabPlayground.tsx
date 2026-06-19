@@ -239,7 +239,7 @@ useEffect(() => {
                 items: updateFileInTree(item.items),
               };
             } else {
-              // 🔥 FIX: Generate the ID to match
+              
               const itemId = generateFileId(item, currentTemplate);
 
               if (itemId === payload.fileId) {

@@ -284,6 +284,18 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
   const { templateData } = get();
   if (!templateData) return;
 
+  const targetFolder = findFolderByPath(
+    JSON.parse(JSON.stringify(templateData)),
+    parentPath.split("/").filter(Boolean)
+  );
+  const duplicate = targetFolder.items.find(
+    (item) => "folderName" in item && item.folderName === newFolder.folderName
+  );
+  if (duplicate) {
+    toast.error(`"${newFolder.folderName}" already exists in this directory`);
+    return;
+  }
+
   try {
     const folderPath = parentPath
       ? `${parentPath}/${newFolder.folderName}`
@@ -474,6 +486,20 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
     handleRenameFolder: async (folder, newFolderName, parentPath, instance:any,saveTemplateData) => {
     const { templateData } = get();
     if (!templateData) return;
+    const targetFolder = findFolderByPath(
+    JSON.parse(JSON.stringify(templateData)),
+    parentPath.split("/").filter(Boolean)
+  );
+  const duplicate = targetFolder.items.find(
+    (item) =>
+      "folderName" in item &&
+      item.folderName === newFolderName &&
+      item.folderName !== folder.folderName  // exclude itself
+  );
+  if (duplicate) {
+    toast.error(`"${newFolderName}" already exists in this directory`);
+    return;
+  }
 
     try {
 
