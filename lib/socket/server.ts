@@ -100,7 +100,7 @@ type SerializedParticipant = {
 
 
 
-// 🔥 NEW: WebContainer state management
+
 interface WebContainerState {
   hostSocketId: string | null;
   hostUserId: string | null;
@@ -174,7 +174,7 @@ function addParticipant(sessionId: string, participant: ParticipantInfo): boolea
       return false;
     }
   }
-  // 🔥 FIX: Use userId as key (prevents duplicates)
+  // Use userId as key (prevents duplicates)
   participants.set(participant.userId, participant);
   
   console.log(`✅ Participant added: ${participant.userName} (${participant.userId})`);
@@ -382,7 +382,7 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
                     sessionId: true,
                     isActive: true,
                     expiresAt: true,
-                    hostId: true, // 🔥 NEW: Get host ID
+                    hostId: true, 
                   }
                 });
 
@@ -421,17 +421,7 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
                   include: { user: { select: { id: true, name: true, image: true } } },
                 });
 
-                // Notify user they joined successfully
-                socket.emit("collab:joined", {
-                  sessionId,
-                  participants: participants.map((p) => ({
-                    userId: p.userId,
-                    userName: p.user?.name || p.displayName || "Anonymous",
-                    userImage: p.user?.image,
-                    role: p.role,
-                    joinedAt: p.joinedAt,
-                  })),
-                });
+                
 
                 const isHost = session.hostId === userId;
                 const role = isHost ? "Host" : "Guest";
@@ -457,6 +447,17 @@ export function initSocketServer(httpServer:HttpServer):SocketIOServer{
 }
 //Bug is fixed ,firstly host presence is checked then user is allowed to join the session and socket.join is called after that. This ensures that the host is present in the room before any guest can join, preventing the issue of guests being able to join before the host and then being blocked when the host finally joins.
 socket.join(sessionId);
+// Notify user they joined successfully
+                socket.emit("collab:joined", {
+                  sessionId,
+                  participants: participants.map((p) => ({
+                    userId: p.userId,
+                    userName: p.user?.name || p.displayName || "Anonymous",
+                    userImage: p.user?.image,
+                    role: p.role,
+                    joinedAt: p.joinedAt,
+                  })),
+                });
 
                 console.log(`🎭 Role determined: ${role} (hostId: ${session.hostId}, userId: ${userId})`);
                 const userWithImage = await prisma.user.findUnique({
@@ -576,9 +577,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
 
 
 
-        // ============================================
-        // COLLAB: Editor & File Operations
-        // ============================================
+       
         socket.on("editor:change", (payload: EditorChangePayload) => {
           if (!socket.sessionId) return;
 
@@ -625,16 +624,15 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
     session: socket.sessionId
   });
 
-  // 🔥 FIX: Use consistent event name "collab:remote-cursor"
-  // 🔥 FIX: Include filePath in broadcast
+  
   socket.to(socket.sessionId).emit("collab:remote-cursor", {
     userId: socket.userId,
     userName: socket.userName,
     fileId: payload.fileId,
-    filePath: payload.filePath, // ✅ Now included!
+    filePath: payload.filePath, 
     position: payload.position,
     selection: payload.selection,
-    timestamp: Date.now() // ✅ Added for staleness detection
+    timestamp: Date.now()
   });
 
   console.log(`[Server] 📡 Broadcasted cursor to session ${socket.sessionId} (excluding ${socket.userName})`);
@@ -677,7 +675,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
         socket.on("file:open", (payload: { fileId: string; filePath: string }) => {
   if (!socket.sessionId || !socket.userId) return;
 
-  // 🔥 NEW: Update participant's active file
+  
   const participants = sessionParticipants.get(socket.sessionId);
   if (participants) {
     const participant = participants.get(socket.userId);
@@ -687,7 +685,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
       
       console.log(`📂 ${socket.userName} opened: ${payload.filePath}`);
       
-      // 🔥 Broadcast updated participant info
+      
       socket.to(socket.sessionId).emit("collab:participant-activity", {
         userId: socket.userId,
         userName: socket.userName,
@@ -717,9 +715,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           });
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - Server Ready
-        // ============================================
+       
         socket.on("webcontainer:server-ready", (data: {
           sessionId: string;
           serverUrl: string;
@@ -757,9 +753,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           console.log(`✅ Broadcasted server URL to session ${data.sessionId}`);
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - State Updates
-        // ============================================
+        
         socket.on("webcontainer:state", (data: {
           sessionId: string;
           isLoading: boolean;
@@ -778,9 +772,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           socket.to(data.sessionId).emit("webcontainer:state", data);
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - Terminal Output
-        // ============================================
+  
         socket.on("webcontainer:terminal", (data: {
           sessionId: string;
           data: string;
@@ -800,9 +792,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           socket.to(data.sessionId).emit("webcontainer:terminal", data);
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - Request Initial Sync
-        // ============================================
+      
         socket.on("webcontainer:request-sync", (data: {
           sessionId: string;
         }) => {
@@ -833,9 +823,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           }
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - File Sync Request (Guest → Host)
-        // ============================================
+       
         socket.on("webcontainer:file-sync", (data: {
           sessionId: string;
           path: string;
@@ -861,9 +849,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           }
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - Sync Error
-        // ============================================
+        
         socket.on("webcontainer:sync-error", (data: {
           sessionId: string;
           path: string;
@@ -873,9 +859,7 @@ socket.on("collab:request-activity", (data: { sessionId: string }) => {
           socket.to(data.sessionId).emit("webcontainer:sync-error", data);
         });
 
-        // ============================================
-        // 🔥 NEW: WEBCONTAINER - Command (for future extensibility)
-        // ============================================
+       
         socket.on("webcontainer:command", (data: {
           sessionId: string;
           userId: string;
@@ -935,9 +919,7 @@ socket.on("workspace:snapshot", (data: {
   console.log(`✅ [SERVER] Snapshot delivered to ${data.requesterSocketId}`);
 });
 
-        // ============================================
-        // DISCONNECT - Cleanup
-        // ============================================
+      
         socket.on("disconnect", async () => {
   console.log("\n🔌 DISCONNECT:", socket.id);
   console.log("   userId:", socket.userId);
@@ -945,12 +927,12 @@ socket.on("workspace:snapshot", (data: {
   console.log("   sessionId:", socket.sessionId);
 
   if (socket.sessionId && socket.userId) {
-    // 🔥 CRITICAL: Check if this was the last connection
+    
     const { participant, wasLastConnection } = removeParticipant(socket.sessionId, socket.id);
     
     if (participant) {
       if (wasLastConnection) {
-        // 🔥 Only log "left" activity if ALL connections closed
+        
         console.log(`👋 ${participant.userName} fully disconnected (all tabs closed)`);
         
         const activityEntry = logActivity(

@@ -204,14 +204,14 @@ useEffect(() => {
   };
 }, [isHost, webContainer.isReady, isReadyTerminal, webContainer.isServerRunning, webContainer.startServer, terminalRef]);
 
-// 🔥 DEBUG: Log when cursors update
+
 useEffect(() => {
   if (CursorsInCurrentFile.length > 0) {
     console.log("👥 Remote cursors in current file:", CursorsInCurrentFile);
   }
 }, [CursorsInCurrentFile]);
 
-  // 🔥 NEW: Listen for remote editor changes at the parent level
+  
   useEffect(() => {
     if (!socket) return;
 
@@ -239,7 +239,7 @@ useEffect(() => {
                 items: updateFileInTree(item.items),
               };
             } else {
-              // 🔥 FIX: Generate the ID to match
+              
               const itemId = generateFileId(item, currentTemplate);
 
               if (itemId === payload.fileId) {
