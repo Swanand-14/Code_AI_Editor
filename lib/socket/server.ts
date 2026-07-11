@@ -45,6 +45,7 @@ export interface FileActionPayload {
   filePath: string;
   newPath?: string;
   content?: string;
+  isFolder?: boolean;
 }
 
 export interface UserPresencePayload {
@@ -1012,7 +1013,7 @@ export function getSocketServer(): SocketIOServer | null {
   return io;
 }
 
-// 🔥 NEW: Utility functions for monitoring/debugging
+
 export function getSessionState(sessionId: string): WebContainerState | null {
   return sessionStates.get(sessionId) || null;
 }

@@ -67,6 +67,7 @@ interface GitWorkspaceState {
 
   beginBranchSwitch: (newBranch: string) => void;
   unmarkFileCreated: (path: string) => void;
+  unmarkFileDeleted: (path: string) => void;
   
 
 
@@ -419,6 +420,14 @@ export const useGitWorkspace = create<GitWorkspaceState>((set, get) => ({
       return { ...ws, createdFiles: newCreated };
     }));
   },
+  unmarkFileDeleted: (path) => {
+  if (get().isSwitchingBranch) return;
+  set((state) => updateActiveBranch(state, (ws) => {
+    const newDeleted = new Set(ws.deletedFiles);
+    newDeleted.delete(path);
+    return { ...ws, deletedFiles: newDeleted };
+  }));
+},
 
 
  stageFile: (path) => {

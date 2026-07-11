@@ -71,6 +71,7 @@ import { useProximityWarnings } from "../hooks/useProximityWarnings";
 import { editor } from "monaco-editor";
 import { set } from "zod";
 import type {GitHubFile} from "../../github/types";
+import { fileCreationWatcher } from "@/modules/webContainers/services/fileWatcher";
 
 
 
@@ -162,6 +163,7 @@ const hostNotPresentRef = useRef(false);
     markFileDeleted,
     unmarkFileCreated,
     unstageAllFiles,
+    
   } = useGitWorkspace();
 
   const activeFile  = useActiveFile();
@@ -197,6 +199,7 @@ const hostNotPresentRef = useRef(false);
     broadcastFileCreate,
     broadcastFileDelete,
     broadcastFileRename,
+    broadcastFileRestore,
     requestSnapshot,
 
   } = useCollabWorkspace({
@@ -764,6 +767,7 @@ useEffect(() => {
       // Broadcast each file deletion
       broadcastFileDelete(file.path);
     });
+    broadcastFileDelete(folderToDelete.path, true);
 
     if (webContainerInstance && isReady) {
       try {
@@ -871,6 +875,110 @@ useEffect(() => {
       broadcastFileRename,
     ]
   );
+
+  const handleRenameFolder = useCallback(
+  async (folderPath: string, newFolderName: string) => {
+    const parentDir = folderPath.includes('/')
+      ? folderPath.substring(0, folderPath.lastIndexOf('/'))
+      : '';
+    const newPath = parentDir ? `${parentDir}/${newFolderName}` : newFolderName;
+
+    if (files.some(f => f.path === newPath && f.type === 'dir')) {
+      toast.error(`"${newFolderName}" already exists`);
+      return;
+    }
+
+    // find all files inside old folder
+    const folderFiles = files.filter(f => f.path.startsWith(folderPath + '/'));
+
+    // close active file if inside
+    if (activeFile?.path.startsWith(folderPath + '/')) {
+      closeFile(activeFile.path);
+    }
+
+    // update expanded dirs
+    setExpandedDirs(prev => {
+      const next = new Set(prev);
+      next.delete(folderPath);
+      Array.from(next).forEach(p => {
+        if (p.startsWith(folderPath + '/')) {
+          next.delete(p);
+          next.add(newPath + p.slice(folderPath.length));
+        }
+      });
+      next.add(newPath);
+      return next;
+    });
+
+    // remove old folder entry, add new
+    removeFileFromTree(folderPath);
+    addFileToTree({
+      name: newFolderName,
+      path: newPath,
+      sha: "", size: 0, type: "dir", content: "",
+    });
+
+    // process each file
+    folderFiles.forEach(file => {
+      const newFilePath = newPath + file.path.slice(folderPath.length);
+      const currentContent = openFiles.find(f => f.path === file.path)?.content
+        ?? file.content ?? '';
+
+      removeFileFromTree(file.path);
+      if (!file.sha) unmarkFileCreated(file.path);
+      else markFileDeleted(file.path);
+
+      addFileToTree({
+        name: newFilePath.split('/').pop() || '',
+        path: newFilePath,
+        sha: "", size: currentContent.length,
+        type: file.type, content: currentContent,
+      });
+      markFileCreated(newFilePath, currentContent);
+
+      // broadcast each file rename
+      broadcastFileRename(file.path, newFilePath, currentContent);
+    });
+
+    // broadcast folder entry rename
+    broadcastFileRename(folderPath, newPath, "", true);
+
+    // WebContainer
+    if (webContainerInstance && isReady) {
+      try {
+        const copyDir = async (src: string, dest: string) => {
+          await webContainerInstance.fs.mkdir(dest, { recursive: true });
+          const entries = await webContainerInstance.fs.readdir(src, { withFileTypes: true });
+          for (const entry of entries) {
+            const srcPath = `${src}/${entry.name}`;
+            const destPath = `${dest}/${entry.name}`;
+            if (entry.isDirectory()) {
+              await copyDir(srcPath, destPath);
+            } else {
+              const content = await webContainerInstance.fs.readFile(srcPath, 'utf-8');
+              await webContainerInstance.fs.writeFile(destPath, content, 'utf-8');
+            }
+          }
+        };
+        await copyDir(`/${folderPath}`, `/${newPath}`);
+        await webContainerInstance.fs.rm(`/${folderPath}`, { recursive: true, force: true });
+      } catch (e) {
+        console.warn('WC folder rename failed:', e);
+      }
+    }
+
+    toast.success(`Renamed to ${newFolderName}`, {
+      description: "Staged as D + A. Commit via Source Control.",
+    });
+  },
+  [
+    files, activeFile, openFiles, closeFile,
+    removeFileFromTree, unmarkFileCreated, markFileDeleted,
+    addFileToTree, markFileCreated,
+    webContainerInstance, isReady,
+    broadcastFileRename, setExpandedDirs,
+  ]
+);
   const handleCommit = useCallback(
     async (message: string, description?: string) => {
       if (!message.trim()) {
@@ -936,6 +1044,31 @@ useEffect(() => {
 
   // Update Zustand
   state.discardFileChanges(filePath);
+  //if all files in a folder are deleted, remove the folder too
+  const parentPath = filePath.includes('/')
+    ? filePath.substring(0, filePath.lastIndexOf('/'))
+    : '';
+
+  if (parentPath && wasCreated) {
+    const remainingFiles = useGitWorkspace.getState().files;
+    const folderStillHasCreatedFiles = remainingFiles.some(f =>
+      f.path.startsWith(parentPath + '/') && f.path !== filePath
+    );
+
+    if (!folderStillHasCreatedFiles) {
+      // folder is now empty — remove it
+      removeFileFromTree(parentPath);
+      if (webContainerInstance && isReady) {
+      await webContainerInstance.fs
+        .rm(`/${parentPath}`, { recursive: true, force: true })
+        .catch(() => {});
+    }
+
+    broadcastFileDelete(parentPath, true);
+  
+    }
+  }
+
 
   // Sync host WebContainer
   if (webContainerInstance && isReady) {
@@ -952,7 +1085,8 @@ useEffect(() => {
 
   // Broadcast to guests
   if (wasDeleted) {
-    broadcastFileCreate(filePath, originalContent);
+    broadcastFileRestore(filePath, originalContent, state.remoteState.get(filePath) ? 
+    state.files.find(f => f.path === filePath)?.sha || "" : "");
   } else if (wasCreated) {
     broadcastFileDelete(filePath);
   } else {
@@ -960,6 +1094,336 @@ useEffect(() => {
   }
 
 }, [webContainerInstance, isReady, broadcastFileCreate, broadcastFileDelete, broadcastContentChange]);
+
+useEffect(() => {
+  if (!webContainerInstance || !isReady) return;
+  if (files.length === 0) return; // wait for workspace to initialize
+
+  console.log("🚀 [GitHub FileWatcher] Starting...");
+
+  const handleFileCreated = async (filePath: string, parentPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(filePath)) return;
+
+    try {
+      const content = await webContainerInstance.fs.readFile(`/${filePath}`, 'utf-8');
+      const fileName = filePath.split('/').pop() || '';
+
+      const newFile: GitHubFile = {
+        name: fileName,
+        path: filePath,
+        sha: "",
+        size: content.length,
+        type: "file",
+        content,
+      };
+
+      addFileToTree(newFile);
+      markFileCreated(filePath, content);
+
+      // expand parent dir in tree
+      if (parentPath) {
+        setExpandedDirs(prev => new Set([...prev, parentPath]));
+      }
+
+      broadcastFileCreate(filePath, content);
+      toast.success(`📄 Created ${fileName} via terminal`);
+    } catch (err) {
+      console.error(`❌ [GitHub FileWatcher] Failed to add file ${filePath}:`, err);
+    }
+  };
+
+  const handleFolderCreated = async (folderPath: string, parentPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(folderPath)) return;
+
+    try {
+      const folderName = folderPath.split('/').pop() || '';
+      const gitkeepPath = `${folderPath}/.gitkeep`;
+
+      // use .gitkeep pattern (same as handleCreateFolder in UI)
+      const placeholder: GitHubFile = {
+        name: ".gitkeep",
+        path: gitkeepPath,
+        sha: "",
+        size: 0,
+        type: "file",
+        content: "",
+      };
+
+      addFileToTree(placeholder);
+      markFileCreated(gitkeepPath);
+
+      setExpandedDirs(prev => new Set([
+        ...prev,
+        ...(parentPath ? [parentPath] : []),
+        folderPath,
+      ]));
+
+      broadcastFileCreate(gitkeepPath, "");
+      toast.success(`📁 Created ${folderName}/ via terminal`);
+    } catch (err) {
+      console.error(`❌ [GitHub FileWatcher] Failed to add folder ${folderPath}:`, err);
+    }
+  };
+
+  const handleFileDeleted = async (filePath: string) => {
+    if (manuallyCreatedFilesRef.current.has(filePath)) return;
+
+    try {
+      const currentFiles = useGitWorkspace.getState().files;
+      const fileInTree = currentFiles.find(f => f.path === filePath);
+      if (!fileInTree) return;
+
+      const isLocalOnly = !fileInTree.sha;
+
+      // close if open
+      if (useGitWorkspace.getState().activeFilePath === filePath) {
+        closeFile(filePath);
+      }
+
+      removeFileFromTree(filePath);
+
+      if (isLocalOnly) {
+        unmarkFileCreated(filePath);
+      } else {
+        markFileDeleted(filePath);
+      }
+
+      broadcastFileDelete(filePath);
+      toast.info(`🗑️ Deleted ${filePath.split('/').pop()} via terminal`);
+    } catch (err) {
+      console.error(`❌ [GitHub FileWatcher] Failed to delete file:`, err);
+    }
+  };
+
+  const handleFolderDeleted = async (folderPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(folderPath)) return;
+
+    try {
+      const currentFiles = useGitWorkspace.getState().files;
+
+      // find all files under this folder
+      const folderFiles = currentFiles.filter(f =>
+        f.path.startsWith(folderPath + '/') || f.path === folderPath
+      );
+
+      if (folderFiles.length === 0) return;
+
+      // close active file if inside this folder
+      const activeFilePath = useGitWorkspace.getState().activeFilePath;
+      if (activeFilePath?.startsWith(folderPath + '/')) {
+        closeFile(activeFilePath);
+      }
+
+      // remove expanded dirs
+      setExpandedDirs(prev => {
+        const next = new Set(prev);
+        next.delete(folderPath);
+        Array.from(next).forEach(p => {
+          if (p.startsWith(folderPath + '/')) next.delete(p);
+        });
+        return next;
+      });
+
+      folderFiles.forEach(file => {
+        removeFileFromTree(file.path);
+        if (!file.sha) {
+          unmarkFileCreated(file.path);
+        } else {
+          markFileDeleted(file.path);
+        }
+        broadcastFileDelete(file.path);
+      });
+      broadcastFileDelete(folderPath, true);
+
+      toast.info(`🗑️ Deleted ${folderPath.split('/').pop()}/ via terminal`);
+    } catch (err) {
+      console.error(`❌ [GitHub FileWatcher] Failed to delete folder:`, err);
+    }
+  };
+
+  const handleFileRenamed = async (oldPath: string, newPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(newPath)) return;
+
+    try {
+      const currentFiles = useGitWorkspace.getState().files;
+      const oldFile = currentFiles.find(f => f.path === oldPath);
+      if (!oldFile) return;
+
+      const newName = newPath.split('/').pop() || '';
+
+      // get current content
+      const currentOpenFiles = useGitWorkspace.getState().openFiles;
+      const currentContent = currentOpenFiles.find(f => f.path === oldPath)?.content
+        ?? oldFile.content
+        ?? '';
+    
+
+      // close old file if open
+      if (useGitWorkspace.getState().activeFilePath === oldPath) {
+        closeFile(oldPath);
+      }
+
+      // remove old
+      removeFileFromTree(oldPath);
+      if (!oldFile.sha) {
+        unmarkFileCreated(oldPath);
+      } else {
+        markFileDeleted(oldPath);
+      }
+
+      // add new
+      const newFile: GitHubFile = {
+        name: newName,
+        path: newPath,
+        sha: "",
+        size: currentContent.length,
+        type: "file",
+        content: currentContent,
+      };
+
+      addFileToTree(newFile);
+      markFileCreated(newPath, currentContent);
+
+      // track new path so next poll doesn't double-fire
+      manuallyCreatedFilesRef.current.add(newPath);
+      setTimeout(() => manuallyCreatedFilesRef.current.delete(newPath), 3000);
+
+      broadcastFileRename(oldPath, newPath, currentContent);
+      toast.info(`✏️ Renamed ${oldPath.split('/').pop()} → ${newName} via terminal`);
+    } catch (err) {
+      console.error(`❌ [GitHub FileWatcher] Failed to rename file:`, err);
+    }
+  };
+
+  const handleFolderRenamed = async (oldPath: string, newPath: string) => {
+    if (manuallyCreatedFilesRef.current.has(newPath)) return;
+
+    try {
+      const currentFiles = useGitWorkspace.getState().files;
+      const folderFiles = currentFiles.filter(f =>
+        f.path.startsWith(oldPath + '/')
+      );
+      //find the old folder entry if it exists
+    
+
+      if (folderFiles.length === 0) return;
+
+      // collect nested paths to suppress watcher
+      const nestedPaths = folderFiles.map(f =>
+        newPath + f.path.slice(oldPath.length)
+      );
+
+      manuallyCreatedFilesRef.current.add(newPath);
+      nestedPaths.forEach(p => manuallyCreatedFilesRef.current.add(p));
+
+      setTimeout(() => {
+        manuallyCreatedFilesRef.current.delete(newPath);
+        nestedPaths.forEach(p => manuallyCreatedFilesRef.current.delete(p));
+      }, 3000);
+
+      // close active if inside old folder
+      const activeFilePath = useGitWorkspace.getState().activeFilePath;
+      if (activeFilePath?.startsWith(oldPath + '/')) {
+        closeFile(activeFilePath);
+      }
+
+      // update expanded dirs
+      setExpandedDirs(prev => {
+        const next = new Set(prev);
+        next.delete(oldPath);
+        Array.from(next).forEach(p => {
+          if (p.startsWith(oldPath + '/')) {
+            next.delete(p);
+            next.add(newPath + p.slice(oldPath.length));
+          }
+        });
+        next.add(newPath);
+        return next;
+      });
+
+    removeFileFromTree(oldPath); 
+    addFileToTree({
+      name: newPath.split('/').pop() || '',
+      path: newPath,
+      sha: "",
+      size: 0,
+      type: "dir",
+      content: "",
+    });
+
+      // process each file in folder
+      folderFiles.forEach(file => {
+        const newFilePath = newPath + file.path.slice(oldPath.length);
+        const currentOpenFiles = useGitWorkspace.getState().openFiles;
+        const currentContent = currentOpenFiles.find(f => f.path === file.path)?.content
+          ?? file.content
+          ?? '';
+
+        // remove old
+        removeFileFromTree(file.path);
+        if (!file.sha) {
+          unmarkFileCreated(file.path);
+        } else {
+          markFileDeleted(file.path);
+        }
+
+        // add new
+        const newFile: GitHubFile = {
+          name: newFilePath.split('/').pop() || '',
+          path: newFilePath,
+          sha: "",
+          size: currentContent.length,
+          type: "file",
+          content: currentContent,
+        };
+
+        addFileToTree(newFile);
+        markFileCreated(newFilePath, currentContent);
+
+        // broadcast each file as rename
+        broadcastFileRename(file.path, newFilePath, currentContent);
+      });
+      broadcastFileRename(oldPath, newPath, "", true);
+
+      toast.info(`✏️ Renamed ${oldPath.split('/').pop()}/ → ${newPath.split('/').pop()}/ via terminal`);
+    } catch (err) {
+      console.error(`❌ [GitHub FileWatcher] Failed to rename folder:`, err);
+    }
+  };
+
+  fileCreationWatcher.initialize(
+    webContainerInstance,
+    handleFileCreated,
+    handleFolderCreated,
+    ['node_modules', '.git', '.next', 'dist', 'build', '.vercel'],
+    {
+      onFileDeleted: handleFileDeleted,
+      onFolderDeleted: handleFolderDeleted,
+      onFileRenamed: handleFileRenamed,
+      onFolderRenamed: handleFolderRenamed,
+    }
+  );
+
+  return () => {
+    console.log("🧹 [GitHub FileWatcher] Cleaning up");
+    fileCreationWatcher.stop();
+  };
+}, [
+  webContainerInstance,
+  isReady,
+  isHost,
+  files.length,  // re-init when workspace loads
+  addFileToTree,
+  removeFileFromTree,
+  markFileCreated,
+  markFileDeleted,
+  unmarkFileCreated,
+  closeFile,
+  broadcastFileCreate,
+  broadcastFileDelete,
+  broadcastFileRename,
+  setExpandedDirs,
+]);
 
  
    if (isJoining) {
@@ -1200,6 +1664,7 @@ useEffect(() => {
                   createdFiles={createdFiles}
                   deletedFiles={deletedFiles}
                   onRenameFile={handleRenameFile}
+                  onRenameFolder={handleRenameFolder} 
                 />
               )}
             </div>

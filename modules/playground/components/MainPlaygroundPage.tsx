@@ -539,7 +539,7 @@ useEffect(() => {
               ? `${fileToSave.path}/${fileToSave.filename}.${fileToSave.fileExtension}`
               : `${fileToSave.filename}.${fileToSave.fileExtension}`;
             
-            // ✅ FIX: Compare both filename and full path
+            //  Compare both filename and full path
             if(currentPath === filePath){
               return {...item,content:fileToSave.content}
             }
@@ -800,7 +800,88 @@ useEffect(() => {
     } catch (error) {
       console.error(`❌ [FileWatcher] Failed to rename file:`, error);
     }
+
   };
+
+  const handleFolderRenamed = async (oldPath:string,newPath:string,parentPath:string) => {
+     if (manuallyCreatedFilesRef.current.has(newPath)) return;
+
+  console.log(`✏️ [FileWatcher] Folder renamed: ${oldPath} → ${newPath}`);
+  try{
+     const currentTemplate = useFileExplorer.getState().templateData;
+    if (!currentTemplate) return;
+
+    const newFolderName = newPath.split('/').pop() || '';
+
+    // find old folder in template
+    const findFolderInTemplate = (
+      items: any[],
+      targetPath: string,
+      currPath: string = ''
+    ): { folder: TemplateFolder; parentPath: string } | null => {
+      for (const item of items) {
+        if ('folderName' in item) {
+          const itemFullPath = currPath
+            ? `${currPath}/${item.folderName}`
+            : item.folderName;
+
+          if (itemFullPath === targetPath) {
+            return { folder: item, parentPath: currPath };
+          }
+
+          const found = findFolderInTemplate(item.items, targetPath, itemFullPath);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const result = findFolderInTemplate(currentTemplate.items, oldPath);
+     if (!result) {
+      console.warn(`⚠️ [FileWatcher] Could not find folder ${oldPath} in template`);
+      return;
+    }
+
+    
+    const nestedPaths: string[] = [];
+    const collectNestedPaths = (folder: TemplateFolder, basePath: string) => {
+      folder.items.forEach((item) => {
+        if ('filename' in item) {
+          nestedPaths.push(`${basePath}/${item.filename}.${item.fileExtension}`);
+        } else if ('folderName' in item) {
+          nestedPaths.push(`${basePath}/${item.folderName}`);
+          collectNestedPaths(item, `${basePath}/${item.folderName}`);
+        }
+      });
+    };
+    collectNestedPaths(result.folder, newPath);
+
+    // add all paths to ref BEFORE the rename runs
+    manuallyCreatedFilesRef.current.add(newPath);
+    nestedPaths.forEach(p => manuallyCreatedFilesRef.current.add(p));
+
+    // clean all up after 3s
+    setTimeout(() => {
+      manuallyCreatedFilesRef.current.delete(newPath);
+      nestedPaths.forEach(p => manuallyCreatedFilesRef.current.delete(p));
+    }, 3000);
+
+    await handleRenameFolder(
+      result.folder,
+      newFolderName,
+      result.parentPath,
+      null,           // ← terminal already renamed in WC, skip WC operation
+      saveTemplateData
+    );
+
+    toast.info(`✏️ Renamed ${oldPath.split('/').pop()}/ → ${newFolderName}/ via terminal`);
+
+  }catch (error) {
+    console.error(`❌ [FileWatcher] Failed to rename folder:`, error);
+  }
+  }
+
+
 
   fileCreationWatcher.initialize(
     webContainerInstance,
@@ -811,6 +892,7 @@ useEffect(() => {
       onFileDeleted: handleFileDeleted,
       onFolderDeleted: handleFolderDeleted,
       onFileRenamed: handleFileRenamed,
+      onFolderRenamed: handleFolderRenamed,
     }
   );
 
@@ -863,7 +945,7 @@ useEffect(() => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleSave]);
 
-  const handleAIAssistant = () => {};
+  
 
   const handleOpenPreviewInNewTab = () => {
     if (serverUrl || manualServerUrl) {

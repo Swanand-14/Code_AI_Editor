@@ -54,6 +54,7 @@ export interface FileActionPayload {
   filePath: string;
   newPath?: string;
   content?: string;
+  isFolder?: boolean; 
 }
 
 export function useCollabSocket(sessionId: string, userId?: string, userName?: string,onError?:(message:string,details?:string) => void) {

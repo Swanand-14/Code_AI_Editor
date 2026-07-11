@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef, use } from "react";
 import { Users, Clock, AlertCircle, Wifi, WifiOff, FileText, X, Save, Play, Square, RotateCcw } from "lucide-react"; // 🔥 Added Play, Square, RotateCcw
 import { toast } from "sonner";
 import { joinCollabSession } from "../actions";
-import { useCollabSocket } from "../hooks/useCollabSocket";
+import { useCollabSocket ,FileActionPayload} from "../hooks/useCollabSocket";
 import type { CollabSessionData } from "../types";
 import { LoadingStep } from "@/modules/playground/components/loader";
 import { currentUser } from "@/modules/auth/actions";
@@ -125,6 +125,9 @@ const activeFile = Array.isArray(openFiles) ? openFiles.find((f) => f.id === act
     isConnected,
     emitWebContainerCommand,
   });
+
+const webContainerRef = useRef(webContainer);
+const isHostRef = useRef(isHost);
   const { remoteCursors, CursorsInCurrentFile } = useRemoteCursors({
   socket,
   sessionId: session.sessionId,
@@ -137,6 +140,12 @@ useProximityWarnings({
   localCursorLine: localCursorPosition.lineNumber,
   enabled: true, // Set to false to disable warnings
 });
+useEffect(() => {
+  webContainerRef.current = webContainer;
+}, [webContainer]);
+useEffect(() => {
+  isHostRef.current = isHost;
+}, [isHost]);
 
 // Auto-start server when BOTH WebContainer AND Terminal are ready (HOST ONLY)
 useEffect(() => {
@@ -292,56 +301,110 @@ useEffect(() => {
   useEffect(() => {
     if (!socket) return;
 
-    const handleRemoteFileAction = async (payload: {
-      userId: string;
-      userName: string;
-      action: "create" | "delete" | "rename";
-      filePath: string;
-      newPath?: string;
-      content?: string;
-      isFolder?: boolean;
-    }) => {
-      // Skip if it's from current user
-      if (payload.userId === user?.id) return;
+    const handleRemoteFileAction = async (payload:FileActionPayload) => {
+  if (payload.userId === user?.id) return;
 
-      console.log(`🔧 Received file action from ${payload.userName}:`, payload.action, payload.filePath);
+  console.log("🔍 [Host] handleRemoteFileAction:", {
+    isHost,
+    hasInstance: !!webContainer.instance,
+    action: payload.action,
+    filePath: payload.filePath,
+  });
 
-      // Reload the workspace from database to get the latest state
-      try {
-        const workspace = await getCollabWorkspaceBySession(session.sessionId);
-        if (workspace && workspace.templateData) {
-          const enrichedTemplate = enrichTemplateWithPaths(workspace.templateData);
-          setTemplateData(enrichedTemplate);
+  // update file tree from DB (existing, keep this)
+  const workspace = await getCollabWorkspaceBySession(session.sessionId);
+  if (workspace && workspace.templateData) {
+    const enrichedTemplate = enrichTemplateWithPaths(workspace.templateData);
+    setTemplateData(enrichedTemplate);
+  }
 
-          // Show notification to user
-          const fileName = payload.filePath.split('/').pop();
-          switch (payload.action) {
-            case "create":
-              toast.info(`${payload.userName} ${payload.isFolder ? 'created folder' : 'created file'}: ${fileName}`);
-              break;
-            case "delete":
-              toast.info(`${payload.userName} ${payload.isFolder ? 'deleted folder' : 'deleted file'}: ${fileName}`);
+  console.log("🔍 [Host] WC sync check:", {
+      isHost: isHostRef.current,           // ← ref
+      hasInstance: !!webContainerRef.current.instance,  // ← ref
+    });
 
-              // Close the file if it's currently open
-              const currentOpenFiles = useFileExplorer.getState().openFiles;
-              const fileToClose = currentOpenFiles.find((f) =>
-                `${f.path}/${f.filename}.${f.fileExtension}`.replace(/^\//, '') === payload.filePath
-              );
-              if (fileToClose) {
-                closeFile(fileToClose.id);
-              }
-              break;
-            case "rename":
-              toast.info(`${payload.userName} renamed: ${fileName} → ${payload.newPath?.split('/').pop()}`);
-              break;
+
+  //  sync WebContainer filesystem too
+  if (isHostRef.current && webContainerRef.current.instance) {
+    const instance = webContainerRef.current.instance;
+    try {
+      switch (payload.action) {
+        case "rename":
+  if (payload.newPath) {
+    if (payload.isFolder) {
+      // folder rename — recursive copy + delete
+      const copyDir = async (src: string, dest: string) => {
+        await instance!.fs.mkdir(dest, { recursive: true });
+        const entries = await instance!.fs.readdir(src, { withFileTypes: true });
+        for (const entry of entries) {
+          const srcPath = `${src}/${entry.name}`;
+          const destPath = `${dest}/${entry.name}`;
+          if (entry.isDirectory()) {
+            await copyDir(srcPath, destPath);
+          } else {
+            const content = await instance!.fs.readFile(srcPath, 'utf-8');
+            await instance!.fs.writeFile(destPath, content, 'utf-8');
           }
-
-          console.log("✅ Template reloaded after file operation");
         }
-      } catch (error) {
-        console.error("❌ Error reloading workspace after file action:", error);
+      };
+      await copyDir(`/${payload.filePath}`, `/${payload.newPath}`);
+      await instance.fs.rm(`/${payload.filePath}`, { recursive: true, force: true });
+    } else {
+      // file rename
+      const content = await instance.fs.readFile(`/${payload.filePath}`, 'utf-8');
+      const dir = payload.newPath.split('/').slice(0, -1).join('/');
+      if (dir) await instance.fs.mkdir(`/${dir}`, { recursive: true });
+      await instance.fs.writeFile(`/${payload.newPath}`, content, 'utf-8');
+      await instance.fs.rm(`/${payload.filePath}`, { force: true });
+    }
+  }
+  break;
+
+case "delete":
+  try {
+    if (payload.isFolder) {
+      await instance.fs.rm(`/${payload.filePath}`, { recursive: true, force: true });
+    } else {
+      await instance.fs.rm(`/${payload.filePath}`, { force: true });
+    }
+  } catch { }
+  break;
+
+case "create":
+  if (payload.isFolder) {
+    await instance.fs.mkdir(`/${payload.filePath}`, { recursive: true });
+  } else {
+    const dir = payload.filePath.split('/').slice(0, -1).join('/');
+    if (dir) await instance.fs.mkdir(`/${dir}`, { recursive: true });
+    await instance.fs.writeFile(`/${payload.filePath}`, payload.content || '', 'utf-8');
+  }
+  break;
+          
       }
-    };
+    } catch (err) {
+      console.error('❌ WebContainer sync failed for remote file action:', err);
+    }
+  }
+
+  // toast notifications (existing)
+  const fileName = payload.filePath.split('/').pop();
+  switch (payload.action) {
+    case "create":
+      toast.info(`${payload.userName} created: ${fileName}`);
+      break;
+    case "delete":
+      toast.info(`${payload.userName} deleted: ${fileName}`);
+      const currentOpenFiles = useFileExplorer.getState().openFiles;
+      const fileToClose = currentOpenFiles.find((f) =>
+        `${f.path}/${f.filename}.${f.fileExtension}`.replace(/^\//, '') === payload.filePath
+      );
+      if (fileToClose) closeFile(fileToClose.id);
+      break;
+    case "rename":
+      toast.info(`${payload.userName} renamed: ${fileName} → ${payload.newPath?.split('/').pop()}`);
+      break;
+  }
+};
 
     socket.on("file:action", handleRemoteFileAction);
 
@@ -539,6 +602,7 @@ useEffect(() => {
         action: "create",
         filePath: folderPath,
         content: "",
+        isFolder: true
       });
 
       console.log(`📤 Emitted folder creation: ${folderPath}`);
@@ -587,6 +651,7 @@ useEffect(() => {
       emitFileAction({
         action: "delete",
         filePath: folderPath,
+        isFolder:true
       });
 
       console.log(`📤 Emitted folder deletion: ${folderPath}`);
@@ -634,6 +699,7 @@ useEffect(() => {
         action: "rename",
         filePath: oldPath,
         newPath: newPath,
+        
       });
 
       console.log(`📤 Emitted file rename: ${oldPath} → ${newPath}`);
@@ -693,6 +759,7 @@ useEffect(() => {
         action: "rename",
         filePath: oldPath,
         newPath: newPath,
+        isFolder:true
       });
 
       console.log(`📤 Emitted folder rename: ${oldPath} → ${newPath}`);
@@ -851,6 +918,8 @@ useEffect(() => {
     }
   }, [openFiles, templateData, saveCollabWorkspace, setOpenFiles]);
 
+
+
   //  Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -991,7 +1060,7 @@ useEffect(() => {
         playgroundId: session.sessionId, parentFolderId: null,
         createdAt: new Date(), updatedAt: new Date(),
       }, parentPath, webContainer.instance, saveCollabWorkspace);
-      emitFileAction({ action: "create", filePath: folderPath, content: "" });
+      emitFileAction({ action: "create", filePath: folderPath, content: "" ,isFolder:true});
       toast.success(`📁 Created ${folderPath.split('/').pop()}/`);
     } catch (err) { console.error(err); }
   };
@@ -1037,7 +1106,7 @@ useEffect(() => {
       const result = findFolder(currentTemplate.items, folderPath);
       if (result) {
         await handleDeleteFolder(result.folder, result.parentPath, null, saveCollabWorkspace);
-        emitFileAction({ action: "delete", filePath: folderPath });
+        emitFileAction({ action: "delete", filePath: folderPath ,isFolder:true});
         toast.info(`🗑️ Deleted ${folderPath.split('/').pop()}/`);
       }
     } catch (err) { console.error(err); }
@@ -1069,10 +1138,72 @@ useEffect(() => {
     } catch (err) { console.error(err); }
   };
 
+  const handleFolderRenamed = async (oldPath: string, newPath: string) => {
+  if (manuallyCreatedFilesRef.current.has(newPath)) return;
+  
+  try {
+    const currentTemplate = useFileExplorer.getState().templateData;
+    if (!currentTemplate) return;
+
+    const findFolder = (items: any[], target: string, curr = ''): any => {
+      for (const item of items) {
+        if ('folderName' in item) {
+          const p = curr ? `${curr}/${item.folderName}` : item.folderName;
+          if (p === target) return { folder: item, parentPath: curr };
+          const found = findFolder(item.items, target, p);
+          if (found) return found;
+        }
+      }
+    };
+
+    const result = findFolder(currentTemplate.items, oldPath);
+    if (!result) return;
+
+    const newFolderName = newPath.split('/').pop() || '';
+
+    // collect nested paths so watcher ignores resulting create events
+    const nestedPaths: string[] = [];
+    const collectNestedPaths = (folder: any, basePath: string) => {
+      folder.items.forEach((item: any) => {
+        if ('filename' in item) {
+          nestedPaths.push(`${basePath}/${item.filename}.${item.fileExtension}`);
+        } else if ('folderName' in item) {
+          nestedPaths.push(`${basePath}/${item.folderName}`);
+          collectNestedPaths(item, `${basePath}/${item.folderName}`);
+        }
+      });
+    };
+    collectNestedPaths(result.folder, newPath);
+
+    manuallyCreatedFilesRef.current.add(newPath);
+    nestedPaths.forEach(p => manuallyCreatedFilesRef.current.add(p));
+
+    setTimeout(() => {
+      manuallyCreatedFilesRef.current.delete(newPath);
+      nestedPaths.forEach(p => manuallyCreatedFilesRef.current.delete(p));
+    }, 3000);
+
+    await handleRenameFolder(
+      result.folder,
+      newFolderName,
+      result.parentPath,
+      null,  // terminal already renamed in WC, skip WC operation
+      saveCollabWorkspace
+    );
+
+    // broadcast to other collaborators
+    emitFileAction({ action: "rename", filePath: oldPath, newPath ,isFolder:true});
+
+    toast.info(`✏️ Renamed ${oldPath.split('/').pop()}/ → ${newFolderName}/`);
+  } catch (err) {
+    console.error(err);
+  }
+};
+
   fileCreationWatcher.initialize(
     webContainer.instance, handleFileCreated, handleFolderCreated,
     ['node_modules', '.git', '.next', 'dist', 'build', '.vercel'],
-    { onFileDeleted: handleFileDeleted, onFolderDeleted: handleFolderDeleted, onFileRenamed: handleFileRenamed }
+    { onFileDeleted: handleFileDeleted, onFolderDeleted: handleFolderDeleted, onFileRenamed: handleFileRenamed ,onFolderRenamed: handleFolderRenamed}
   );
 
   return () => fileCreationWatcher.stop();

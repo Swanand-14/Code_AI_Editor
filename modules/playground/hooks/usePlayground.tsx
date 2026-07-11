@@ -2,7 +2,7 @@ import { useState,useEffect,useCallback } from "react";
 import {toast} from "sonner"
 import type { TemplateFolder } from "../lib/path-to-json";
 import { getPlaygroundById, SaveUpdatedCode } from "../action";
-import { enrichTemplateWithPaths } from "../lib"; // 🔥 FIX: Import path enrichment function
+import { enrichTemplateWithPaths } from "../lib"; 
 
 interface PlaygroundData {
     id:string;
@@ -38,7 +38,7 @@ export const usePlayground = (id:string):UsePlaygroundReturn => {
         const rawContent = data?.templateFiles?.[0]?.content;
         if(typeof rawContent === "string"){
             const parsedContent = JSON.parse(rawContent);
-            // 🔥 FIX: Enrich with path information
+            // 🔥  Enrich with path information
             const enrichedTemplate = enrichTemplateWithPaths(parsedContent);
             setTemplateData(enrichedTemplate);
             toast.success("Playground loaded successfully");

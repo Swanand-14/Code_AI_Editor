@@ -11,6 +11,7 @@ export class FileCreationWatcher {
    private onFileDeletedCallback?: (filePath: string, parentPath: string) => void;
   private onFolderDeletedCallback?: (folderPath: string, parentPath: string) => void;
   private onFileRenamedCallback?: (oldPath: string, newPath: string, parentPath: string) => void;
+  private onFolderRenamedCallback?: (oldPath: string, newPath: string, parentPath: string) => void;
   /**
    * Initialize the watcher
    */
@@ -23,12 +24,14 @@ export class FileCreationWatcher {
       onFileDeleted?: (filePath: string, parentPath: string) => void;
       onFolderDeleted?: (folderPath: string, parentPath: string) => void;
       onFileRenamed?: (oldPath: string, newPath: string, parentPath: string) => void;
+      onFolderRenamed?: (oldPath: string, newPath: string, parentPath: string) => void;
     }
   ) {
     console.log("🔍 [FileWatcher] Initializing file creation watcher...");
     this.onFileDeletedCallback = options?.onFileDeleted;
     this.onFolderDeletedCallback = options?.onFolderDeleted;
     this.onFileRenamedCallback = options?.onFileRenamed;
+    this.onFolderRenamedCallback = options?.onFolderRenamed;
     
     // Initial scan to populate known files/folders
     await this.scanFilesystem(instance, '', excludePaths);
@@ -119,80 +122,133 @@ private async checkForChanges(
       const newFileContents = new Map<string, string>();
       
       // Scan current state
-      await this.scanCurrentState(instance, currentPath, excludePaths, currentFiles, currentFolders, newFileContents);
-      
-      // 🔥 NEW: Detect deletions (files that were known but are now missing)
-      if (this.onFileDeletedCallback) {
-        for (const knownFile of this.knownFiles) {
-          if (!currentFiles.has(knownFile)) {
-            console.log(`🗑️ [FileWatcher] File deleted: ${knownFile}`);
-            const parentPath = knownFile.includes('/') ? knownFile.substring(0, knownFile.lastIndexOf('/')) : '';
-            this.onFileDeletedCallback(knownFile, parentPath);
-            this.fileContents.delete(knownFile);
+    await this.scanCurrentState(instance, currentPath, excludePaths, currentFiles, currentFolders, newFileContents);
+    const deletedFiles = Array.from(this.knownFiles).filter(f => !currentFiles.has(f));
+    const addedFiles = Array.from(currentFiles).filter(f => !this.knownFiles.has(f));
+    const deletedFolders = Array.from(this.knownFolders).filter(f => !currentFolders.has(f));
+    const addedFolders = Array.from(currentFolders).filter(f => !this.knownFolders.has(f));
+    // Detect renamed folders - first
+     if (this.onFolderRenamedCallback) {
+      for (const deletedFolder of [...deletedFolders]) {
+        const deletedChildren = deletedFiles
+          .filter(f => f.startsWith(deletedFolder + '/'))
+          .map(f => f.replace(deletedFolder + '/', ''));
+
+        for (const newFolder of [...addedFolders]) {
+          const newChildren = addedFiles
+            .filter(f => f.startsWith(newFolder + '/'))
+            .map(f => f.replace(newFolder + '/', ''));
+
+          const deletedParent = deletedFolder.includes('/')
+            ? deletedFolder.substring(0, deletedFolder.lastIndexOf('/'))
+            : '';
+          const newParent = newFolder.includes('/')
+            ? newFolder.substring(0, newFolder.lastIndexOf('/'))
+            : '';
+
+          const sameParent = deletedParent === newParent;
+          const sameChildren = deletedChildren.sort().join(',') === newChildren.sort().join(',');
+
+          if (sameParent && sameChildren && deletedChildren.length > 0) {
+            console.log(`📁 [FileWatcher] Folder renamed: ${deletedFolder} → ${newFolder}`);
+            this.onFolderRenamedCallback(deletedFolder, newFolder, newParent);
+
+            // consume folder from lists
+            deletedFolders.splice(deletedFolders.indexOf(deletedFolder), 1);
+            addedFolders.splice(addedFolders.indexOf(newFolder), 1);
+
+            // consume all child files from lists
+            addedFiles
+              .filter(f => f.startsWith(newFolder + '/'))
+              .forEach(f => {
+                const idx = addedFiles.indexOf(f);
+                if (idx > -1) addedFiles.splice(idx, 1);
+              });
+            deletedFiles
+              .filter(f => f.startsWith(deletedFolder + '/'))
+              .forEach(f => {
+                const idx = deletedFiles.indexOf(f);
+                if (idx > -1) deletedFiles.splice(idx, 1);
+              });
+
+            break;
           }
         }
       }
-      
-      if (this.onFolderDeletedCallback) {
-        for (const knownFolder of this.knownFolders) {
-          if (!currentFolders.has(knownFolder)) {
-            console.log(`🗑️ [FileWatcher] Folder deleted: ${knownFolder}`);
-            const parentPath = knownFolder.includes('/') ? knownFolder.substring(0, knownFolder.lastIndexOf('/')) : '';
-            this.onFolderDeletedCallback(knownFolder, parentPath);
+    }
+    // Detect renamed files - second
+    if (this.onFileRenamedCallback) {
+      for (const deletedPath of [...deletedFiles]) {
+        const deletedContent = this.fileContents.get(deletedPath);
+        if (!deletedContent) continue;
+
+        for (const newPath of [...addedFiles]) {
+          const newContent = newFileContents.get(newPath);
+          if (newContent === deletedContent) {
+            console.log(`✏️ [FileWatcher] File renamed: ${deletedPath} → ${newPath}`);
+            const parentPath = newPath.includes('/')
+              ? newPath.substring(0, newPath.lastIndexOf('/'))
+              : '';
+            this.onFileRenamedCallback(deletedPath, newPath, parentPath);
+
+            // consume from lists
+            deletedFiles.splice(deletedFiles.indexOf(deletedPath), 1);
+            addedFiles.splice(addedFiles.indexOf(newPath), 1);
+            break;
           }
         }
       }
-      
-      // 🔥 NEW: Detect renames (file with same content but different path)
-      if (this.onFileRenamedCallback) {
-        const deletedFiles = Array.from(this.knownFiles).filter(f => !currentFiles.has(f));
-        const newFiles = Array.from(currentFiles).filter(f => !this.knownFiles.has(f));
-        
-        for (const deletedPath of deletedFiles) {
-          const deletedContent = this.fileContents.get(deletedPath);
-          if (deletedContent) {
-            // Look for a new file with the same content
-            for (const newPath of newFiles) {
-              const newContent = newFileContents.get(newPath);
-              if (newContent === deletedContent) {
-                console.log(`✏️ [FileWatcher] File renamed: ${deletedPath} → ${newPath}`);
-                const parentPath = newPath.includes('/') ? newPath.substring(0, newPath.lastIndexOf('/')) : '';
-                this.onFileRenamedCallback(deletedPath, newPath, parentPath);
-                
-                // Remove from lists so we don't trigger create/delete callbacks
-                const newIdx = newFiles.indexOf(newPath);
-                if (newIdx > -1) newFiles.splice(newIdx, 1);
-                const delIdx = deletedFiles.indexOf(deletedPath);
-                if (delIdx > -1) deletedFiles.splice(delIdx, 1);
-                break;
-              }
-            }
-          }
-        }
+    }
+    // Handle deleted files and folders
+     if (this.onFileDeletedCallback) {
+      for (const filePath of deletedFiles) {
+        console.log(`🗑️ [FileWatcher] File deleted: ${filePath}`);
+        const parentPath = filePath.includes('/')
+          ? filePath.substring(0, filePath.lastIndexOf('/'))
+          : '';
+        this.onFileDeletedCallback(filePath, parentPath);
+        this.fileContents.delete(filePath);
       }
-      
-      // Detect new files
-      for (const filePath of currentFiles) {
-        if (!this.knownFiles.has(filePath)) {
-          console.log(`📄 [FileWatcher] New file detected: ${filePath}`);
-          const parentPath = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/')) : '';
-          onFileCreated(filePath, parentPath);
-        }
+    }
+
+    if (this.onFolderDeletedCallback) {
+      for (const folderPath of deletedFolders) {
+        console.log(`🗑️ [FileWatcher] Folder deleted: ${folderPath}`);
+        const parentPath = folderPath.includes('/')
+          ? folderPath.substring(0, folderPath.lastIndexOf('/'))
+          : '';
+        this.onFolderDeletedCallback(folderPath, parentPath);
       }
-      
-      // Detect new folders
-      for (const folderPath of currentFolders) {
-        if (!this.knownFolders.has(folderPath)) {
-          console.log(`📁 [FileWatcher] New folder detected: ${folderPath}`);
-          const parentPath = folderPath.includes('/') ? folderPath.substring(0, folderPath.lastIndexOf('/')) : '';
-          onFolderCreated(folderPath, parentPath);
-        }
-      }
-      
-      // Update known state
-      this.knownFiles = currentFiles;
-      this.knownFolders = currentFolders;
-      this.fileContents = newFileContents;
+    }
+
+
+
+
+
+
+
+
+    // Handle added files and folders
+    for (const filePath of addedFiles) {
+      console.log(`📄 [FileWatcher] New file detected: ${filePath}`);
+      const parentPath = filePath.includes('/')
+        ? filePath.substring(0, filePath.lastIndexOf('/'))
+        : '';
+      onFileCreated(filePath, parentPath);
+    }
+
+    for (const folderPath of addedFolders) {
+      console.log(`📁 [FileWatcher] New folder detected: ${folderPath}`);
+      const parentPath = folderPath.includes('/')
+        ? folderPath.substring(0, folderPath.lastIndexOf('/'))
+        : '';
+      onFolderCreated(folderPath, parentPath);
+    }
+
+    // update known state
+    this.knownFiles = currentFiles;
+    this.knownFolders = currentFolders;
+    this.fileContents = newFileContents;
       
     } catch (error) {
       // Ignore errors

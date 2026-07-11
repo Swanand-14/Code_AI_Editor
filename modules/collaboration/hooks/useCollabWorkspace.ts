@@ -22,6 +22,9 @@ export interface FileActionPayload {
   filePath: string;
   newPath?: string;   // only for rename
   content?: string;   // only for create
+  isFolder?: boolean;
+  isRestore?: boolean;
+  sha?: string;
 }
 
 interface GitHubFile {
@@ -55,6 +58,7 @@ export function useCollabWorkspace({
   const removeFileFromTree = useGitWorkspace((s) => s.removeFileFromTree);
   const markFileDeleted    = useGitWorkspace((s) => s.markFileDeleted);
   const unmarkFileCreated  = useGitWorkspace((s) => s.unmarkFileCreated);
+  const unmarkFileDeleted  = useGitWorkspace((s) => s.unmarkFileDeleted);
   const openFileInWorkspace = useGitWorkspace((s) => s.openFile);
   const openFiles          = useGitWorkspace((s) => s.openFiles);
   const files              = useGitWorkspace((s) => s.files);
@@ -99,83 +103,197 @@ export function useCollabWorkspace({
     },
     [currentUserId, updateFileContent, openFileInWorkspace,isReady, webContainerInstance]
   );
-    const handleRemoteFileAction = useCallback(
-    async(payload: FileActionPayload) => {
-      if (payload.userId === currentUserId) return;
+  const handleRemoteFileAction = useCallback(
+  async (payload: FileActionPayload) => {
+    if (payload.userId === currentUserId) return;
 
-      console.log(
-        `[CollabWorkspace] 📁 Remote file:action "${payload.action}" on ${payload.filePath} from ${payload.userName}`
-      );
+    switch (payload.action) {
 
-      switch (payload.action) {
-        // ── CREATE ────────────────────────────────────────────────────────
-        case "create": {
-          const alreadyExists = filesRef.current.some(
-            (f) => f.path === payload.filePath
-          );
-          if (alreadyExists) {
-            console.warn(
-              `[CollabWorkspace] ⚠️ File already exists locally, skipping create: ${payload.filePath}`
-            );
-            return;
+      case "create": {
+        const alreadyExists = filesRef.current.some(f => f.path === payload.filePath);
+        if (alreadyExists) {
+  if (payload.isRestore) {
+    unmarkFileDeleted(payload.filePath);  // ← still remove D even if file exists in tree
+  }
+  return;
+}
+
+        if (payload.isFolder) {
+          //  add folder entry
+          addFileToTree({
+            name: payload.filePath.split('/').pop() || '',
+            path: payload.filePath,
+            sha: "", size: 0, type: "dir", content: "",
+          });
+
+          if (webContainerInstance && isReady) {
+            await webContainerInstance.fs
+              .mkdir(`/${payload.filePath}`, { recursive: true })
+              .catch(() => {});
           }
+        } else {
+          if(payload.isRestore){
+             const restoredFile: GitHubFile = {
+                name: payload.filePath.split("/").pop() || payload.filePath,
+                path: payload.filePath,
+                sha: payload.sha || "",  // ← real sha, not empty
+                size: (payload.content ?? "").length,
+                type: "file",
+                content: payload.content ?? "",
+              };
+              addFileToTree(restoredFile);
+              unmarkFileDeleted(payload.filePath); 
+              // ← no markFileCreated ← file shows as clean, no A marker ✅
 
-          const newFile: GitHubFile = {
+              if (webContainerInstance && isReady) {
+                const dir = payload.filePath.split("/").slice(0, -1).join("/");
+                if (dir) await webContainerInstance.fs
+                  .mkdir(`/${dir}`, { recursive: true }).catch(() => {});
+                await webContainerInstance.fs
+                  .writeFile(`/${payload.filePath}`, payload.content ?? "", "utf-8")
+                  .catch(console.error);
+              }
+
+          }else{
+            const newFile: GitHubFile = {
             name: payload.filePath.split("/").pop() || payload.filePath,
             path: payload.filePath,
-            sha: "",        // not on GitHub yet
-            size: (payload.content ?? "").length,
-            type: "file",
-            content: payload.content ?? "",
+            sha: "", size: (payload.content ?? "").length,
+            type: "file", content: payload.content ?? "",
           };
-
           addFileToTree(newFile);
-          // Pass content so the draft is correct if the file is opened
           markFileCreated(payload.filePath, payload.content ?? "");
+
           if (webContainerInstance && isReady) {
-  const dir = payload.filePath.split("/").slice(0, -1).join("/");
-  if (dir) await webContainerInstance.fs.mkdir(`/${dir}`, { recursive: true }).catch(() => {});
-  await webContainerInstance.fs.writeFile(`/${payload.filePath}`, payload.content ?? "", "utf-8").catch(console.error);
-}
-
-          
-          break;
+            const dir = payload.filePath.split("/").slice(0, -1).join("/");
+            if (dir) await webContainerInstance.fs
+              .mkdir(`/${dir}`, { recursive: true }).catch(() => {});
+            await webContainerInstance.fs
+              .writeFile(`/${payload.filePath}`, payload.content ?? "", "utf-8")
+              .catch(console.error);
+          }
+          }
+        
         }
+        break;
+      }
 
-        // ── DELETE ────────────────────────────────────────────────────────
-        case "delete": {
-          const target = filesRef.current.find(
-            (f) => f.path === payload.filePath
+      case "delete": {
+        if (payload.isFolder) {
+          //  remove all files under this folder
+          const folderFiles = filesRef.current.filter(f =>
+            f.path.startsWith(payload.filePath + '/')
           );
 
-          removeFileFromTree(payload.filePath);
-          if (webContainerInstance && isReady) {
-  webContainerInstance.fs.rm(`/${payload.filePath}`).catch(() => {});
-}
+          folderFiles.forEach(file => {
+            removeFileFromTree(file.path);
+            if (!file.sha) {
+              unmarkFileCreated(file.path);
+            } else {
+              markFileDeleted(file.path);
+            }
+          });
 
+          // remove folder entry itself
+          removeFileFromTree(payload.filePath);
+
+          if (webContainerInstance && isReady) {
+            await webContainerInstance.fs
+              .rm(`/${payload.filePath}`, { recursive: true, force: true })
+              .catch(() => {});
+          }
+        } else {
+          const target = filesRef.current.find(f => f.path === payload.filePath);
+          removeFileFromTree(payload.filePath);
+          if (!target?.sha) unmarkFileCreated("pages2/index.jsx");
+          else markFileDeleted("pages2/index.jsx"); 
+
+          if (webContainerInstance && isReady) {
+            await webContainerInstance.fs
+              .rm(`/${payload.filePath}`)
+              .catch(() => {});
+          }
 
           if (!target?.sha) {
-            // Local-only file — just untrack
             unmarkFileCreated(payload.filePath);
           } else {
-            // GitHub file — stage for deletion
             markFileDeleted(payload.filePath);
           }
-          break;
         }
+        break;
+      }
 
-        // ── RENAME ────────────────────────────────────────────────────────
-        case "rename": {
-          if (!payload.newPath) {
-            console.warn("[CollabWorkspace] ⚠️ rename action missing newPath");
-            return;
-          }
+      case "rename": {
+        if (!payload.newPath) return;
 
-          const oldFile = filesRef.current.find(
-            (f) => f.path === payload.filePath
+        if (payload.isFolder) {
+          // find all files under old folder
+          const folderFiles = filesRef.current.filter(f =>
+            f.path.startsWith(payload.filePath + '/')
           );
 
-          // --- Delete-side ---
+          // remove old folder entry
+          removeFileFromTree(payload.filePath);
+
+          // add new folder entry
+          addFileToTree({
+            name: payload.newPath.split('/').pop() || '',
+            path: payload.newPath,
+            sha: "", size: 0, type: "dir", content: "",
+          });
+
+          // process each file inside
+          folderFiles.forEach(file => {
+            const newFilePath = payload.newPath! + file.path.slice(payload.filePath.length);
+            const currentContent = openFilesRef.current.find(f => f.path === file.path)?.content
+              ?? file.content ?? '';
+
+            // remove old
+            removeFileFromTree(file.path);
+            if (!file.sha) {
+              unmarkFileCreated(file.path);
+            } else {
+              markFileDeleted(file.path);
+            }
+
+            // add new
+            addFileToTree({
+              name: newFilePath.split('/').pop() || '',
+              path: newFilePath,
+              sha: "", size: currentContent.length,
+              type: file.type, content: currentContent,
+            });
+            markFileCreated(newFilePath, currentContent);
+          });
+
+          // WC folder rename — recursive copy + delete
+          if (webContainerInstance && isReady) {
+            const copyDir = async (src: string, dest: string) => {
+              await webContainerInstance.fs.mkdir(dest, { recursive: true });
+              const entries = await webContainerInstance.fs
+                .readdir(src, { withFileTypes: true });
+              for (const entry of entries) {
+                const srcPath = `${src}/${entry.name}`;
+                const destPath = `${dest}/${entry.name}`;
+                if (entry.isDirectory()) {
+                  await copyDir(srcPath, destPath);
+                } else {
+                  const content = await webContainerInstance.fs.readFile(srcPath, 'utf-8');
+                  await webContainerInstance.fs.writeFile(destPath, content, 'utf-8');
+                }
+              }
+            };
+            await copyDir(`/${payload.filePath}`, `/${payload.newPath}`)
+              .catch(console.error);
+            await webContainerInstance.fs
+              .rm(`/${payload.filePath}`, { recursive: true, force: true })
+              .catch(() => {});
+          }
+
+        } else {
+          // single file rename — existing logic is correct
+          const oldFile = filesRef.current.find(f => f.path === payload.filePath);
+
           removeFileFromTree(payload.filePath);
           if (!oldFile?.sha) {
             unmarkFileCreated(payload.filePath);
@@ -183,51 +301,40 @@ export function useCollabWorkspace({
             markFileDeleted(payload.filePath);
           }
 
-          // --- Add-side ---
-          const currentContent =
-            openFilesRef.current.find((f) => f.path === payload.filePath)
-              ?.content ??
-            oldFile?.content ??
-            payload.content ??
-            "";
+          const currentContent = openFilesRef.current.find(f => f.path === payload.filePath)?.content
+            ?? oldFile?.content ?? payload.content ?? '';
 
-          const renamedFile: GitHubFile = {
+          addFileToTree({
             name: payload.newPath.split("/").pop() || payload.newPath,
             path: payload.newPath,
-            sha: "",
-            size: currentContent.length,
-            type: "file",
-            content: currentContent,
-          };
-
-          addFileToTree(renamedFile);
+            sha: "", size: currentContent.length,
+            type: "file", content: currentContent,
+          });
           markFileCreated(payload.newPath, currentContent);
-          if (webContainerInstance && isReady) {
-  const dir = payload.newPath!.split("/").slice(0, -1).join("/");
-  if (dir) await webContainerInstance.fs.mkdir(`/${dir}`, { recursive: true }).catch(() => {});
-  await webContainerInstance.fs.writeFile(`/${payload.newPath}`, currentContent, "utf-8").catch(console.error);
-  await webContainerInstance.fs.rm(`/${payload.filePath}`).catch(() => {});
-}
-          break;
-        }
 
-        default:
-          console.warn(
-            `[CollabWorkspace] ⚠️ Unknown file:action: ${(payload as any).action}`
-          );
+          if (webContainerInstance && isReady) {
+            const dir = payload.newPath.split("/").slice(0, -1).join("/");
+            if (dir) await webContainerInstance.fs
+              .mkdir(`/${dir}`, { recursive: true }).catch(() => {});
+            await webContainerInstance.fs
+              .writeFile(`/${payload.newPath}`, currentContent, "utf-8")
+              .catch(console.error);
+            await webContainerInstance.fs
+              .rm(`/${payload.filePath}`)
+              .catch(() => {});
+          }
+        }
+        break;
       }
-    },
-    [
-      currentUserId,
-      addFileToTree,
-      markFileCreated,
-      removeFileFromTree,
-      markFileDeleted,
-      unmarkFileCreated,
-      webContainerInstance, 
-    isReady,
-    ]
-  );
+    }
+  },
+  [
+    currentUserId,
+    addFileToTree, markFileCreated,
+    removeFileFromTree, markFileDeleted, unmarkFileCreated,
+    webContainerInstance, isReady,
+  ]
+);
     const handleSnapshotRequested = useCallback((data: {
     sessionId: string;
     requesterSocketId: string;
@@ -349,7 +456,7 @@ export function useCollabWorkspace({
     [socket, sessionId, currentUserId]
   );
   const broadcastFileCreate = useCallback(
-    (filePath: string, content: string) => {
+    (filePath: string, content: string,isFolder?: boolean) => {
       if (!socket?.connected) return;
 
       const payload: FileActionPayload = {
@@ -358,6 +465,7 @@ export function useCollabWorkspace({
         action:   "create",
         filePath,
         content,
+        isFolder, 
       };
 
       socket.emit("file:action", payload);
@@ -369,7 +477,7 @@ export function useCollabWorkspace({
    * Emit a file:action "delete" event to peers.
    */
   const broadcastFileDelete = useCallback(
-    (filePath: string) => {
+    (filePath: string,isFolder?: boolean) => {
       if (!socket?.connected) return;
 
       const payload: FileActionPayload = {
@@ -377,6 +485,7 @@ export function useCollabWorkspace({
         userId:   currentUserId,
         action:   "delete",
         filePath,
+        isFolder, 
       };
 
       socket.emit("file:action", payload);
@@ -388,7 +497,7 @@ export function useCollabWorkspace({
    * Emit a file:action "rename" event to peers.
    */
   const broadcastFileRename = useCallback(
-    (oldPath: string, newPath: string, content: string) => {
+    (oldPath: string, newPath: string, content: string,isFolder?: boolean) => {
       if (!socket?.connected) return;
 
       const payload: FileActionPayload = {
@@ -398,12 +507,27 @@ export function useCollabWorkspace({
         filePath: oldPath,
         newPath,
         content,
+        isFolder, 
       };
 
       socket.emit("file:action", payload);
     },
     [socket, sessionId, currentUserId]
   );
+
+  const broadcastFileRestore = useCallback(
+  (filePath: string, content: string, sha: string) => {
+    if (!socket?.connected) return;
+    socket.emit("file:action", {
+      sessionId, userId: currentUserId,
+      action: "create",
+      filePath,
+      content,
+      isRestore: true,  // ← tells receiver this is a restore, not a new file
+      sha,              // ← pass original sha so receiver knows it's a GitHub file
+    });
+  }, [socket, sessionId, currentUserId]
+);
 
   
   const requestSnapshot = useCallback((targetSessionId: string) => {
@@ -417,6 +541,7 @@ export function useCollabWorkspace({
     broadcastFileCreate,
     broadcastFileDelete,
     broadcastFileRename,
+    broadcastFileRestore,
     requestSnapshot
   };
 

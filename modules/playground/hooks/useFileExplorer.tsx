@@ -68,6 +68,7 @@ interface FileExplorerState{
     saveTemplateData: (data: TemplateFolder) => Promise<TemplateFolder | null>
   ) => Promise<void>;
   updateFileContent: (fileId: string, content: string) => void;
+  syncOpenFilesIntoTemplateData: () => TemplateFolder | null;
 }
 
 
@@ -189,6 +190,30 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
             editorContent:""
         })
     },
+    syncOpenFilesIntoTemplateData: (): TemplateFolder | null => {
+  const { templateData, openFiles } = get();
+  if (!templateData) return null;
+
+  const synced = JSON.parse(JSON.stringify(templateData)) as TemplateFolder;
+
+  const syncItems = (items: any[]): any[] => {
+    return items.map((item) => {
+      if ("folderName" in item) {
+        return { ...item, items: syncItems(item.items) };
+      } else {
+        const fileId = generateFileId(item, templateData);
+        const openFile = openFiles.find((f) => f.id === fileId);
+        if (openFile?.content !== undefined) {
+          return { ...item, content: openFile.content };
+        }
+        return item;
+      }
+    });
+  };
+
+  synced.items = syncItems(synced.items);
+  return synced;
+},
     handleAddFile: async(newFile, parentPath, writeFileSync, instance, saveTemplateData)=> {
   const { templateData } = get();
   if (!templateData) return;
@@ -484,7 +509,7 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
     }
   },
     handleRenameFolder: async (folder, newFolderName, parentPath, instance:any,saveTemplateData) => {
-    const { templateData } = get();
+    const { templateData ,openFiles} = get();
     if (!templateData) return;
     const targetFolder = findFolderByPath(
     JSON.parse(JSON.stringify(templateData)),
@@ -510,77 +535,127 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
         const newPath = parentPath
           ? `${parentPath}/${newFolderName}`
           : newFolderName;
-        
-        console.log(`✏️ Renaming folder in WebContainer: ${oldPath} → ${newPath}`);
-        
-        if (instance && instance.fs) {
-          try {
-            // Create new folder
-            await instance.fs.mkdir(newPath, { recursive: true });
-            
-            // Copy all contents recursively
-            const copyDir = async (src: string, dest: string) => {
-              const entries = await instance.fs.readdir(src, { withFileTypes: true });
-              
-              for (const entry of entries) {
-                const srcPath = `${src}/${entry.name}`;
-                const destPath = `${dest}/${entry.name}`;
-                
-                if (entry.isDirectory()) {
-                  await instance.fs.mkdir(destPath, { recursive: true });
-                  await copyDir(srcPath, destPath);
-                } else {
-                  const content = await instance.fs.readFile(srcPath, 'utf-8');
-                  await instance.fs.writeFile(destPath, content, 'utf-8');
-                }
-              }
-            };
-            
-            await copyDir(oldPath, newPath);
-            
-            // Delete old folder
-            await instance.fs.rm(oldPath, { recursive: true, force: true });
-            console.log(`✅ Folder renamed in WebContainer`);
-          } catch (error) {
-            console.warn(`⚠️ Error renaming folder in WebContainer:`, error);
+
+    
+
+    const syncedTemplateData = get().syncOpenFilesIntoTemplateData();
+    if (!syncedTemplateData) return;
+    if (instance && instance.fs) {
+      try {
+        await instance.fs.mkdir(newPath, { recursive: true });
+
+        const copyDir = async (src: string, dest: string) => {
+          const entries = await instance.fs.readdir(src, { withFileTypes: true });
+          for (const entry of entries) {
+            const srcPath = `${src}/${entry.name}`;
+            const destPath = `${dest}/${entry.name}`;
+            if (entry.isDirectory()) {
+              await instance.fs.mkdir(destPath, { recursive: true });
+              await copyDir(srcPath, destPath);
+            } else {
+              const content = await instance.fs.readFile(srcPath, 'utf-8');
+              await instance.fs.writeFile(destPath, content, 'utf-8');
+            }
           }
-        }
-      const updatedTemplateData = JSON.parse(
-        JSON.stringify(templateData)
-      ) as TemplateFolder;
-      const pathParts = parentPath.split("/");
-      let currentFolder = updatedTemplateData;
+        };
 
-      for (const part of pathParts) {
-        if (part) {
-          const nextFolder = currentFolder.items.find(
-            (item) => "folderName" in item && item.folderName === part
-          ) as TemplateFolder;
-          if (nextFolder) currentFolder = nextFolder;
-        }
+        await copyDir(oldPath, newPath);
+        await instance.fs.rm(oldPath, { recursive: true, force: true });
+        console.log(` Folder renamed in WebContainer`);
+      } catch (error) {
+        console.warn(` Error renaming folder in WebContainer:`, error);
       }
-
-      const folderIndex = currentFolder.items.findIndex(
-        (item) => "folderName" in item && item.folderName === folder.folderName
-      );
-
-      if (folderIndex !== -1) {
-        const updatedFolder = {
-          ...currentFolder.items[folderIndex],
-          folderName: newFolderName,
-        } as TemplateFolder;
-        currentFolder.items[folderIndex] = updatedFolder;
-
-        set({ templateData: updatedTemplateData });
-
-        // Use the passed saveTemplateData function
-        await saveTemplateData(updatedTemplateData);
-        toast.success(`Renamed folder to: ${newFolderName}`);
-      }
-    } catch (error) {
-      console.error("Error renaming folder:", error);
-      toast.error("Failed to rename folder");
     }
+
+    //  close all open tabs inside old folder BEFORE updating tree
+    // must use original templateData (not clone) so generateFileId matches openFiles ids
+    const findFolderInTemplate = (
+      root: TemplateFolder,
+      targetName: string,
+      basePath: string
+    ): TemplateFolder | null => {
+      for (const item of root.items) {
+        if ("folderName" in item) {
+          if (item.folderName === targetName) return item;
+          const found = findFolderInTemplate(
+            item,
+            targetName,
+            basePath ? `${basePath}/${item.folderName}` : item.folderName
+          );
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+
+    const folderInTemplate = findFolderInTemplate(
+      templateData,       // ← original, ids must match openFiles
+      folder.folderName,
+      parentPath
+    );
+
+    const closeFilesInFolder = (f: TemplateFolder) => {
+      f.items.forEach((item) => {
+        if ("filename" in item) {
+          const fileId = generateFileId(item, templateData); // ← original templateData
+          get().closeFile(fileId);
+        } else if ("folderName" in item) {
+          closeFilesInFolder(item);
+        }
+      });
+    };
+
+    if (folderInTemplate) {
+      closeFilesInFolder(folderInTemplate); // ← closes all tabs from old folder
+    }
+
+    const pathParts = parentPath.split("/");
+    let currentFolder = syncedTemplateData;
+    for (const part of pathParts) {
+      if (part) {
+        const nextFolder = currentFolder.items.find(
+          (item) => "folderName" in item && item.folderName === part
+        ) as TemplateFolder;
+        if (nextFolder) currentFolder = nextFolder;
+      }
+    }
+    const folderIndex = currentFolder.items.findIndex(
+      (item) => "folderName" in item && item.folderName === folder.folderName
+    );
+
+    
+    if (folderIndex !== -1) {
+      const updatedFolder = {
+        ...currentFolder.items[folderIndex],
+        folderName: newFolderName,
+      } as TemplateFolder;
+      currentFolder.items[folderIndex] = updatedFolder;
+
+      //  update path on all nested files
+      const newBasePath = parentPath ? `${parentPath}/${newFolderName}` : newFolderName;
+
+      const updatePaths = (f: TemplateFolder, basePath: string) => {
+        f.items.forEach((item, index) => {
+          if ("filename" in item) {
+            (f.items[index] as TemplateFile).path = basePath;
+          } else if ("folderName" in item) {
+            updatePaths(item, `${basePath}/${item.folderName}`);
+          }
+        });
+      };
+
+      updatePaths(updatedFolder, newBasePath);
+
+      set({ templateData: syncedTemplateData }); // ← synced content + updated paths
+      await saveTemplateData(syncedTemplateData);
+      toast.success(`Renamed folder to: ${newFolderName}`);
+    }
+
+    }catch(error){
+    console.error("Error renaming folder:", error);
+    toast.error("Failed to rename folder");
+    }
+        
   },
   updateFileContent: (fileId, content) => {
     set((state) => ({
@@ -599,115 +674,109 @@ export const useFileExplorer = create<FileExplorerState>((set,get)=>({
   },
 
   handleRenameFile:async(file,newFilename,newExtension,parentPath,instance:any,saveTemplateData)=>{
-    const { templateData,openFiles } = get();
-    if (!templateData) return;
+    const { templateData, openFiles } = get();
+  if (!templateData) return;
 
-    try {
-      const oldPath = parentPath
-          ? `${parentPath}/${file.filename}.${file.fileExtension}`
-          : `${file.filename}.${file.fileExtension}`;
-        
-        const newPath = parentPath
-          ? `${parentPath}/${newFilename}.${newExtension}`
-          : `${newFilename}.${newExtension}`;
+  // duplicate check — still use original templateData (read only, no mutation)
+  const targetFolder = findFolderByPath(
+    JSON.parse(JSON.stringify(templateData)) as TemplateFolder,
+    parentPath.split("/").filter(Boolean)
+  );
+  const duplicate = targetFolder.items.find(
+    (item) =>
+      "filename" in item &&
+      item.filename === newFilename &&
+      item.fileExtension === newExtension &&
+      !(item.filename === file.filename && item.fileExtension === file.fileExtension)
+  );
+  if (duplicate) {
+    toast.error(`"${newFilename}.${newExtension}" already exists in this directory`);
+    return;
+  }
 
-           const targetFolder = findFolderByPath(
-        JSON.parse(JSON.stringify(templateData)) as TemplateFolder,
-        parentPath.split("/").filter(Boolean)
-      );
-      const duplicate = targetFolder.items.find(
-        (item) =>
-          "filename" in item &&
-          item.filename === newFilename &&
-          item.fileExtension === newExtension &&
-          // Exclude the file being renamed itself
-          !(item.filename === file.filename && item.fileExtension === file.fileExtension)
-      );
-      if (duplicate) {
-        toast.error(
-          `"${newFilename}.${newExtension}" already exists in this directory`
-        );
-        return;
-      }
-        
-        console.log(`✏️ Renaming file in WebContainer: ${oldPath} → ${newPath}`);
-         const updatedTemplateData = JSON.parse(JSON.stringify(templateData)) as TemplateFolder;
-      const pathParts = parentPath.split("/");
-      let currentFolder = updatedTemplateData;
-      
-        
-        if (instance && instance.fs) {
-          try {
-            // Read the old file content
-            const content = await instance.fs.readFile(oldPath, 'utf-8');
-            // Write to new path
-            await instance.fs.writeFile(newPath, content, 'utf-8');
-            // Delete old file
-            try {
-            await instance.fs.rm(oldPath, { force: true });
-            console.log(`✅ Old file deleted from WebContainer: ${oldPath}`);
-          } catch (rmError) {
-            // Fallback: try without options
-            console.warn(`⚠️ rm with options failed, trying plain rm:`, rmError);
-            await instance.fs.rm(oldPath);
-          }
-            console.log(`✅ File renamed in WebContainer`);
-          } catch (error) {
-            console.warn(`⚠️ Error renaming file in WebContainer:`, error);
-          }
+  try {
+    const oldPath = parentPath
+      ? `${parentPath}/${file.filename}.${file.fileExtension}`
+      : `${file.filename}.${file.fileExtension}`;
+
+    const newPath = parentPath
+      ? `${parentPath}/${newFilename}.${newExtension}`
+      : `${newFilename}.${newExtension}`;
+
+    // sync openFiles content into templateData before cloning
+    const syncedTemplateData = get().syncOpenFilesIntoTemplateData();
+    if (!syncedTemplateData) return;
+
+    // WebContainer rename
+    if (instance && instance.fs) {
+      try {
+        const content = await instance.fs.readFile(oldPath, 'utf-8');
+        await instance.fs.writeFile(newPath, content, 'utf-8');
+        try {
+          await instance.fs.rm(oldPath, { force: true });
+        } catch (rmError) {
+          await instance.fs.rm(oldPath);
         }
-     
-
-      for (const part of pathParts) {
-        if (part) {
-          const nextFolder = currentFolder.items.find(
-            (item) => "folderName" in item && item.folderName === part
-          ) as TemplateFolder;
-          if (nextFolder) currentFolder = nextFolder;
-        }
+        console.log(`✅ File renamed in WebContainer`);
+      } catch (error) {
+        console.warn(`⚠️ Error renaming file in WebContainer:`, error);
       }
-
-      const fileIndex = currentFolder.items.findIndex(
-        (item) =>
-          "filename" in item &&
-          item.filename === file.filename &&
-          item.fileExtension === file.fileExtension
-      );
-
-      if (fileIndex !== -1) {
-        const updatedFile = {
-          ...currentFolder.items[fileIndex],
-          filename: newFilename,
-          fileExtension: newExtension,
-        } as TemplateFile;
-        currentFolder.items[fileIndex] = updatedFile;
-
-        // Update open files if the renamed file is open
-        const oldFileId = generateFileId(file, templateData);
-        const openFile = openFiles.find((f) => f.id === oldFileId);
-        if (openFile) {
-          const newFileId = generateFileId(updatedFile, templateData);
-          get().setOpenFiles(
-            openFiles.map((f) =>
-              f.id === oldFileId ? { ...f, id: newFileId } : f
-            )
-          );
-          // If the renamed file is the active file, update activeFileId
-          if (get().activeFileId === oldFileId) {
-            get().setActiveFileId(newFileId);
-          }
-        }
-
-        set({ templateData: updatedTemplateData });
-
-        // Use the passed saveTemplateData function
-        await saveTemplateData(updatedTemplateData);
-        toast.success(`Renamed file to: ${newFilename}.${newExtension}`);
-      }
-    } catch (error) {
-      console.error("Error renaming file:", error);
-      toast.error("Failed to rename file");
     }
+
+    // walk the synced clone to find the folder
+    const pathParts = parentPath.split("/");
+    let currentFolder = syncedTemplateData;
+
+    for (const part of pathParts) {
+      if (part) {
+        const nextFolder = currentFolder.items.find(
+          (item) => "folderName" in item && item.folderName === part
+        ) as TemplateFolder;
+        if (nextFolder) currentFolder = nextFolder;
+      }
+    }
+
+    const fileIndex = currentFolder.items.findIndex(
+      (item) =>
+        "filename" in item &&
+        item.filename === file.filename &&
+        item.fileExtension === file.fileExtension
+    );
+
+    if (fileIndex !== -1) {
+      const updatedFile = {
+        ...currentFolder.items[fileIndex],
+        filename: newFilename,
+        fileExtension: newExtension,
+      } as TemplateFile;
+      currentFolder.items[fileIndex] = updatedFile;
+
+      // update openFiles tab id if file was open
+      const oldFileId = generateFileId(file, templateData);
+      const openFile = openFiles.find((f) => f.id === oldFileId);
+      if (openFile) {
+        const newFileId = generateFileId(updatedFile, templateData);
+        get().setOpenFiles(
+          openFiles.map((f) =>
+            f.id === oldFileId
+              ? { ...f, id: newFileId, filename: newFilename, fileExtension: newExtension }
+              : f
+          )
+        );
+        if (get().activeFileId === oldFileId) {
+          get().setActiveFileId(newFileId);
+        }
+      }
+
+      //  save synced clone — has latest content + new filename
+      set({ templateData: syncedTemplateData });
+      await saveTemplateData(syncedTemplateData);
+      toast.success(`Renamed file to: ${newFilename}.${newExtension}`);
+    }
+  } catch (error) {
+    console.error("Error renaming file:", error);
+    toast.error("Failed to rename file");
+  }
   }
 
 
