@@ -357,6 +357,39 @@ export const useGitWorkspace = create<GitWorkspaceState>((set, get) => ({
   markFileCreated: (path,restoredContent) => {
     if (get().isSwitchingBranch) return;
     set((state) => updateActiveBranch(state, (ws) => {
+       //while renaming a file back to old name, we want to remove the deleted marker and update the modified marker if content has changed
+      if (ws.remoteState.has(path)) {
+      const newDeleted = new Set(ws.deletedFiles);
+      newDeleted.delete(path);  // ← remove D marker
+
+      const newModified = new Set(ws.modifiedFiles);
+      // check if content differs from original
+      const originalContent = ws.remoteState.get(path) ?? '';
+      if (restoredContent !== undefined && restoredContent !== originalContent) {
+        newModified.add(path);  // ← content changed, mark as modified
+      } else {
+        newModified.delete(path);  
+      }
+
+      if (restoredContent !== undefined) {
+        const existingOpen = ws.openFiles.find(f => f.path === path);
+        if (existingOpen) {
+          return {
+            ...ws,
+            deletedFiles: newDeleted,
+            modifiedFiles: newModified,
+            openFiles: ws.openFiles.map(f =>
+              f.path === path
+                ? { ...f, content: restoredContent, hasChanges: restoredContent !== originalContent }
+                : f
+            ),
+          };
+        }
+      }
+
+      return { ...ws, deletedFiles: newDeleted, modifiedFiles: newModified };
+    }
+
       const newCreated = new Set([...ws.createdFiles, path]);
       if (restoredContent === undefined) {
         return { ...ws, createdFiles: newCreated };
