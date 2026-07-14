@@ -1,6 +1,6 @@
 # CodeForge — Browser-Based Collaborative IDE
 
-> A full-stack collaborative code editor that runs Node.js projects directly in the browser, with real-time multi-user editing, live cursor synchronization, and GitHub repository integration.
+> A full-stack, browser-based IDE that executes Node.js projects entirely client-side via WebContainers, with real-time multi-user collaboration, live cursor synchronization, and direct GitHub repository integration — built on Next.js 15, Socket.IO, and React 19.
 
 ---
 
@@ -12,7 +12,7 @@
 > - Guest joining and workspace snapshot initialization
 > - Real-time cursor synchronization across users
 > - File and folder CRUD synchronization
-> - Recursive folder rename propagation
+> - Recursive folder rename propagation across all participants
 > - File deletion across all participants
 > - WebContainer filesystem synchronization
 
@@ -31,48 +31,47 @@
 |---|---|
 | ![Collaboration](.github/screenshots/collab.png) | ![Terminal](.github/screenshots/terminal.png) |
 
-| GitHub Integration |
-|---|
-| ![GitHub](.github/screenshots/github.png) |
+| GitHub Integration | Source Control |
+|---|---|
+| ![GitHub](.github/screenshots/github.png) | ![SourceControl](.github/screenshots/source-control.png) |
 
 ---
 
 ## Features
 
 ### Core IDE
-- **Browser-based execution** — runs Node.js, React, Vue, Next.js, Svelte projects entirely in the browser via WebContainers (no server-side compute)
-- **Integrated terminal** — full shell access inside the browser with hot-reload support
-- **Monaco editor** — the same editor that powers VS Code, with syntax highlighting, language detection, and keyboard shortcuts
-- **Project templates** — pre-configured starter templates for common frameworks
-- **Autosave** — debounced autosave syncs editor state to the database periodically, with `beforeunload` safety net
+- **Browser-based execution** — runs React, Vue, Next.js, Svelte, and Node.js projects entirely in the browser via WebContainers; no server-side compute or Docker required
+- **Monaco editor** — the same editor engine that powers VS Code, with syntax highlighting, per-language detection, and full keyboard shortcut support
+- **Integrated terminal** — full shell access inside the browser with hot-reload support on file save
+- **Project templates** — pre-configured starter templates for common frameworks to get running immediately
+- **Autosave** — debounced background autosave (3s idle) syncs editor state to the database, with a `beforeunload` safety net for tab closes
 
 ### Real-Time Collaboration
-- **Multi-user editing** — multiple users edit the same file simultaneously with full content synchronization
-- **Live cursor synchronization** — remote cursors rendered as Monaco content widgets with per-user color assignment and 6-second stale cursor cleanup
-- **Proximity warnings** — visual glyph indicators when collaborators are editing near the same lines
-- **Presence panel** — shows active participants, their current file, and a live activity log
-- **Follow mode** — follow another user's cursor across files in real time (Escape to stop)
-- **Host-guest model** — session host controls the WebContainer runtime; guests sync through the host
+- **Multi-user editing** — multiple users edit the same workspace simultaneously with full content synchronization
+- **Live cursor synchronization** — remote cursors rendered as Monaco `IContentWidget` instances, with per-user color assignment and automatic 6-second stale cursor cleanup
+- **Proximity warnings** — glyph margin indicators appear when collaborators are editing within a configurable line radius of each other
+- **Presence panel** — shows active participants, their currently open file, and a real-time activity log
+- **Follow mode** — lock your view to another user's cursor; automatically switches files as they navigate (press Escape to stop)
+- **Host-guest model** — the session host controls the WebContainer runtime; the architecture differs between normal collab and GitHub collab (see Collaboration Workflow)
 
 ### File System Synchronization
-- **Full CRUD sync** — file and folder create, delete, and rename operations propagate to all participants in real time
-- **Recursive folder rename** — renaming a folder correctly propagates path updates for all nested files and folders across every participant's file tree and WebContainer filesystem
-- **FileWatcher** — polling-based WebContainer filesystem watcher (2s interval) detects terminal-driven changes (e.g. `touch`, `rm`, `mv`) and syncs them back to the UI and all participants
-- **Duplicate prevention** — `manuallyCreatedFilesRef` guards against the FileWatcher double-firing on UI-triggered operations
-- **WebContainer filesystem consistency** — structural operations (rename/delete/create) are applied to each participant's local WebContainer instance after receiving socket events
+- **Full CRUD sync** — file and folder create, delete, and rename operations propagate in real time to all participants' file trees and WebContainer filesystems
+- **Recursive folder rename** — renaming a folder correctly updates every nested file's path in Zustand, manages folder entries explicitly, and applies a recursive copy-then-delete on the WebContainer filesystem (WebContainers expose no native rename API)
+- **FileWatcher** — polling-based WebContainer filesystem watcher (2s interval) detects terminal-driven changes (`touch`, `rm`, `mv`) and syncs them back to the UI and all participants
+- **Duplicate prevention** — `manuallyCreatedFilesRef` tracks UI-triggered operations with a 3s TTL so the FileWatcher never double-fires on paths the UI already handled
 
 ### GitHub Integration
-- **Repository import** — load any GitHub repository directly into the editor with full file tree and content
+- **Repository import** — load any GitHub repository directly into the editor with full file tree and content fetched via Octokit
 - **Branch-aware workspace** — each branch maintains independent file state, open tabs, and change tracking
-- **Staged changes** — modified, created, and deleted files are tracked separately for commit
-- **Direct commits** — commit changes directly to GitHub from the editor with a commit message
-- **Source control panel** — view diffs, stage files selectively, and discard individual file changes
-- **Diff viewer** — inline diff view showing original vs modified content before committing
+- **Staged changes** — modified, created, and deleted files are tracked separately using Zustand Sets
+- **Direct commits** — commit changes directly to GitHub from the editor using the blob → tree → commit Octokit chain
+- **Source control panel** — view per-file diffs, stage selectively, and discard individual file changes
+- **Diff viewer** — inline Monaco diff view comparing original GitHub content (`remoteState`) against the working copy
 
 ### Authentication & Sessions
-- **NextAuth v5** — GitHub and Google OAuth with session management
-- **Collaboration sessions** — shareable session links with expiry, host presence validation, and guest blocking until host joins
-- **Multi-tab support** — a single user opening multiple tabs is handled correctly; "left session" only fires when all tabs are closed
+- **NextAuth v5** — GitHub and Google OAuth with server-side session management
+- **Collaboration sessions** — shareable session links with configurable expiry; host presence is validated server-side before any guest is admitted
+- **Multi-tab awareness** — a user opening multiple tabs creates multiple socket connections, each tracked in a `Set<socketId>` per participant; the "user left" event fires only when all tabs close
 
 ---
 
@@ -80,19 +79,20 @@
 
 | Category | Technologies |
 |---|---|
-| **Frontend** | Next.js 15, React 19, TypeScript, Monaco Editor |
+| **Frontend** | Next.js 15 (App Router), React 19, TypeScript |
+| **Editor** | Monaco Editor (`@monaco-editor/react`) |
 | **Backend** | Next.js API Routes, Custom Node.js HTTP Server |
 | **Collaboration** | Socket.IO (WebSockets) |
-| **Runtime** | WebContainers API (@webcontainer/api) |
-| **Authentication** | NextAuth v5 (GitHub OAuth, Google OAuth) |
+| **Runtime** | WebContainers API (`@webcontainer/api`) |
+| **Authentication** | NextAuth v5 — GitHub OAuth, Google OAuth |
 | **Database** | MongoDB Atlas, Prisma ORM |
 | **GitHub API** | Octokit REST |
 | **State Management** | Zustand |
-| **Caching / Queues** | Upstash Redis |
+| **Caching** | Upstash Redis |
 | **File Storage** | Vercel Blob |
 | **AI** | Google Gemini API |
 | **Styling** | Tailwind CSS, shadcn/ui |
-| **Testing** | Vitest, Playwright |
+| **Testing** | Vitest (481+ unit tests) |
 | **CI/CD** | GitHub Actions, Docker |
 
 ---
@@ -100,177 +100,299 @@
 ## Architecture Overview
 
 ```
-Browser
-  │
-  ├── Next.js 15 (App Router)
-  │     ├── Server Components — page rendering, auth
-  │     ├── API Routes — workspace CRUD, GitHub operations
-  │     └── Custom HTTP Server — hosts both Next.js and Socket.IO on one port
-  │
-  ├── Socket.IO (WebSocket layer)
-  │     ├── Editor change events (cursor:move, editor:change)
-  │     ├── File action events (file:action — create/delete/rename)
-  │     ├── Presence events (collab:join, collab:user-left)
-  │     ├── WebContainer state sync (webcontainer:server-ready, webcontainer:terminal)
-  │     └── Workspace snapshots (workspace:snapshot-requested/snapshot)
-  │
-  ├── WebContainers API
-  │     ├── Node.js runtime running inside the browser (WASM-based)
-  │     ├── Full filesystem access (fs.readFile, fs.writeFile, fs.rm, fs.mkdir)
-  │     ├── Process spawning (npm install, dev server)
-  │     └── Server-ready events → preview iframe URL
-  │
-  ├── GitHub API (Octokit)
-  │     ├── Repository tree fetching
-  │     ├── File content retrieval
-  │     └── Direct commits (blob → tree → commit chain)
-  │
-  └── MongoDB Atlas (via Prisma)
-        ├── User accounts and sessions
-        ├── Playground workspaces and template data
-        ├── Collaboration sessions and participants
-        └── Workspace drafts (uncommitted change persistence)
+┌─────────────────────────────────────────────────────┐
+│                     Browser                         │
+│                                                     │
+│  ┌─────────────┐   ┌──────────────┐  ┌──────────┐ │
+│  │ Next.js 15  │   │  Socket.IO   │  │WebContain│ │
+│  │ App Router  │   │  WS Client   │  │er Runtime│ │
+│  └──────┬──────┘   └──────┬───────┘  └────┬─────┘ │
+└─────────┼────────────────┼───────────────┼─────────┘
+          │ HTTP            │ WebSocket     │ WASM/FS
+          ▼                ▼               │
+┌─────────────────────────────────────┐   │
+│         Custom Node.js Server       │   │
+│                                     │   │
+│  ┌──────────────┐  ┌─────────────┐ │   │
+│  │  Next.js     │  │ Socket.IO   │ │   │
+│  │  Handler     │  │ Server      │ │   │
+│  │  (HTTP)      │  │ (WS)        │ │   │
+│  └──────┬───────┘  └──────┬──────┘ │   │
+└─────────┼─────────────────┼─────────┘   │
+          │                 │             │
+          ▼                 ▼             │
+┌─────────────────┐  ┌─────────────┐     │
+│  MongoDB Atlas  │  │ GitHub API  │◄────┘
+│  (Prisma ORM)   │  │ (Octokit)   │
+└─────────────────┘  └─────────────┘
 ```
 
-### Key Architectural Decision — One Port, Two Protocols
+### Why a Custom HTTP Server?
 
-Socket.IO is attached directly to the same Node.js HTTP server that serves Next.js. HTTP requests go to Next.js; WebSocket upgrade requests are intercepted by Socket.IO — both on port 3000. This avoids CORS complexity and works cleanly with Next.js's custom server mode.
+Next.js's built-in server doesn't expose the raw Node.js `http.Server` instance, which Socket.IO needs to attach its WebSocket upgrade handler. Rather than running Socket.IO on a separate port (which would require CORS configuration and complicate deployment), CodeForge uses a custom `server.ts` entry point that creates one `http.Server`, passes it to both Next.js and Socket.IO, and listens on a single port.
 
 ```typescript
-// server.ts
+// server.ts — one server, two protocols
 const httpServer = createServer(async (req, res) => {
-  await handle(req, res, parsedUrl); // Next.js handles HTTP
+  await handle(req, res, parsedUrl); // Next.js handles HTTP requests
 });
-const io = initSocketServer(httpServer); // Socket.IO handles WS upgrades
+const io = initSocketServer(httpServer); // Socket.IO intercepts WS upgrades
 httpServer.listen(3000);
 ```
+
+HTTP requests and WebSocket connections are differentiated at the TCP level by the presence of an `Upgrade: websocket` header — no port separation required.
+
+### Socket.IO Event Architecture
+
+```mermaid
+graph LR
+    Client -->|cursor:move| Server
+    Server -->|collab:remote-cursor| OtherClients
+    Client -->|editor:change| Server
+    Server -->|editor:change| OtherClients
+    Client -->|file:action| Server
+    Server -->|file:action| OtherClients
+    Client -->|collab:join| Server
+    Server -->|collab:joined| Client
+    Server -->|collab:participants-updated| AllClients
+```
+
+Event names are intentionally asymmetric in some cases (`cursor:move` → `collab:remote-cursor`) to make data flow direction explicit at a glance.
 
 ---
 
 ## Collaboration Workflow
 
-### 1. Session Initialization
+### 1. Session Initialization & Host Validation
 
-The host creates a session linked to a playground or GitHub repository. A shareable session ID is generated and stored in MongoDB. Guests cannot join until the host's socket is present in the room — this is enforced on the server before `socket.join()` is called.
+The host creates a session linked to a playground or GitHub repository. A shareable session ID is stored in MongoDB. Crucially, guests are blocked at the **server level** — `socket.join(sessionId)` is only called after the server confirms the host's socket is present in the room. This prevents the race condition where a guest joins before the host and gets stuck in a broken state.
 
 ```
-Host joins → socket.join(sessionId) → room exists
-Guest joins → server checks room for host socket → allowed or blocked
+Host joins
+  → socket.join(sessionId) ✅
+Guest joins
+  → server scans room for host socketId
+  → host present? → socket.join(sessionId) ✅
+  → host absent? → emit HOST_NOT_PRESENT → guest blocked ❌
 ```
 
-### 2. Workspace Snapshot (GitHub Collab)
+### 2. Workspace Snapshot — GitHub Collab
 
-When a guest joins a GitHub collab session, the clean GitHub tree is fetched first (committed state). The host then sends a snapshot of their current workspace — including modified, created, and deleted file sets — directly to the joining guest's socket. The guest applies this snapshot on top of the clean tree, arriving at the exact same state as the host.
+When a guest joins a GitHub collab session mid-way, the clean GitHub tree (last committed state) doesn't reflect the host's uncommitted changes. To solve this, the guest requests a workspace snapshot from the host immediately after joining.
 
 ```
 Guest joins
-  → fetch clean GitHub tree
-  → request snapshot from host (via server relay)
-  → host sends { files, modifiedFiles, createdFiles, deletedFiles }
-  → guest applies snapshot → workspace matches host ✅
-```
+  → fetch clean GitHub tree (committed state)
+  → emit workspace:request-snapshot
+  → server relays to host
+  → host serializes { files, modifiedFiles, createdFiles, deletedFiles }
+  → server delivers directly to guest's socketId
+  → guest applies snapshot on top of clean tree
+  → workspace matches host exactly ✅
 
-If the host is offline, the guest falls back to the clean GitHub tree with an 8-second timeout.
+Fallback (host offline or 8s timeout)
+  → guest proceeds with clean GitHub tree only
+```
 
 ### 3. Editor Synchronization
 
-Every keystroke emits a full-content `editor:change` event (Phase 1 — no operational transforms). The server broadcasts to all other participants in the session room. Receivers apply the new content to their local state and WebContainer filesystem simultaneously.
+Every keystroke emits a full-content `editor:change` event (Phase 1 — no delta encoding or operational transforms). The server broadcasts to all other participants. Receivers apply the content to their Zustand store and WebContainer filesystem simultaneously for immediate hot reload.
 
-```
-User types → emitEditorChange() → server → all others
-  → updateFileContent() (Zustand)
-  → webContainerInstance.fs.writeFile() (hot reload)
-```
-
-A `isRemoteChange` ref prevents Monaco's `onDidChangeCursorPosition` from emitting back to the server when content is being applied from a remote source.
+A `isRemoteChange` ref is set to `true` before calling `editor.setValue()` and cleared after 50ms. This prevents Monaco's internal `onDidChangeCursorPosition` event from firing back to the server when content is being applied from a remote source — which would otherwise create an infinite feedback loop.
 
 ### 4. Cursor Synchronization
 
-Cursor positions are debounced at 100ms and emitted as `cursor:move` events. The server rebroadcasts them as `collab:remote-cursor` (intentionally different event name — `cursor:move` is client→server only). Remote cursors are rendered as Monaco `IContentWidget` instances with per-user color assignment (8 colors, assigned by arrival order). Stale cursors are removed after 6 seconds of inactivity.
-
-### 5. File Tree Synchronization
-
-All structural file operations (create, delete, rename) are broadcast as `file:action` events with an `isFolder` flag to distinguish file vs folder operations. Recipients update their local Zustand store and WebContainer filesystem independently.
-
-For **folder renames**, each nested file's path is updated individually. The old folder entry (`type: "dir"`) is removed and a new one is added. Recipients apply a recursive copy-then-delete on their WebContainer filesystem since WebContainers have no native rename API.
-
-### 6. WebContainer Consistency (Normal Collab)
-
-In normal collab, only the host runs a WebContainer instance. Guests sync file content to the host's WebContainer via `webcontainer:file-sync` socket events (server relays directly to host's socket ID). Structural operations received from guests are applied to the host's WebContainer in a `handleRemoteFileAction` handler, using refs to avoid stale closure issues with the WebContainer instance.
-
-```typescript
-// Stale closure fix — instance read at call time, not at closure creation time
-const webContainerRef = useRef(webContainer);
-useEffect(() => { webContainerRef.current = webContainer; }, [webContainer]);
+```
+User moves cursor
+  → debounced 100ms → emit cursor:move
+  → server rebroadcasts as collab:remote-cursor (different name — direction clarity)
+  → receivers create/update Monaco IContentWidget
+  → per-user color assigned on first appearance (8 colors, arrival order)
+  → 6s inactivity → cursor removed (stale cleanup)
+  → disconnect → cursor removed immediately
 ```
 
-### 7. WebContainer Consistency (GitHub Collab)
+### 5. File Tree & WebContainer Synchronization
 
-In GitHub collab, every participant runs their own WebContainer instance. When a file action is received, each user applies the change to their own local WebContainer filesystem directly — no relay through the host. This means zero latency for preview updates.
+All structural operations broadcast a `file:action` event. An `isFolder: boolean` flag in the payload distinguishes file operations from folder operations, avoiding the need for separate event types.
 
-### 8. Multi-Tab Handling
+| Operation | Sender does | Receiver does |
+|---|---|---|
+| Create file | `addFileToTree` + `markFileCreated` + WC write | Same, via `handleRemoteFileAction` |
+| Delete file | `removeFileFromTree` + `markFileDeleted` + WC rm | Same |
+| Rename file | Remove old + add new in Zustand + WC read/write/rm | Same |
+| Create folder | `addFileToTree` (dir entry) + WC mkdir | Same |
+| Delete folder | Remove all nested files + folder entry + WC rm recursive | Same |
+| Rename folder | Update all nested paths + old/new folder entries + WC recursive copy+delete | Same |
 
-Each socket connection has a unique ID. A user opening multiple tabs creates multiple socket connections but maps to a single participant entry in the server's `sessionParticipants` Map. The Map stores `socketIds` as a `Set`. The "user left" event only fires when the Set becomes empty — i.e., all tabs are closed.
+> WebContainers expose no native rename API. Every rename — file or folder — is implemented as read-then-write-then-delete. For folder renames, this is done recursively.
 
-### 9. Terminal-Driven File Changes (FileWatcher)
+### 6. WebContainer Strategy — Normal vs GitHub Collab
 
-A polling-based FileWatcher (2-second interval) monitors the WebContainer filesystem for changes made via the terminal (e.g. `touch`, `rm`, `mv`). It compares current vs known filesystem state and fires callbacks for created, deleted, and renamed files/folders.
+The two collaboration modes use fundamentally different WebContainer architectures, each chosen to match their data source:
 
-Rename detection matches a deleted file with a newly created file by comparing content. Folder rename detection matches by same parent directory and identical set of child filenames.
+**Normal Collab** — data lives in MongoDB (one source of truth):
+- Only the host runs a WebContainer instance
+- Guests relay file content to the host via `webcontainer:file-sync` socket events; the server forwards directly to the host's `socketId` (not the whole room)
+- Structural operations from guests are applied to the host's WebContainer via `handleRemoteFileAction`, using a `useRef` to avoid stale closure issues
 
-A `manuallyCreatedFilesRef` Set prevents double-firing when the UI triggers an operation that also changes the WebContainer filesystem — the watcher sees the change but ignores it because the path is in the ref.
+**GitHub Collab** — data is fetched independently from GitHub by each user:
+- Every participant runs their own WebContainer instance
+- File actions update each user's local WebContainer directly after receiving socket events
+- No relay through the host; preview hot reloads happen with zero added latency
+
+### 7. Multi-Tab Awareness
+
+```
+User opens Tab 1 → socket_001 → participant entry created { socketIds: Set["socket_001"] }
+User opens Tab 2 → socket_002 → socketIds: Set["socket_001", "socket_002"]
+Tab 1 closes     → socket_001 removed → socketIds: Set["socket_002"] → no "left" event
+Tab 2 closes     → socket_002 removed → Set empty → "user left" broadcast ✅
+```
+
+### 8. Terminal-Driven File Changes (FileWatcher)
+
+Because WebContainers don't emit filesystem events, a polling loop runs every 2 seconds comparing current vs known filesystem state. Detection order is strictly enforced to avoid misclassification:
+
+```
+checkForChanges()
+  1. Build raw diffs: deletedFiles[], addedFiles[], deletedFolders[], addedFolders[]
+  2. Folder renames first  → splice matched paths from all four arrays
+  3. File renames          → splice matched paths
+  4. Deletions             → fire for remaining deletedFiles + deletedFolders
+  5. Creations             → fire for remaining addedFiles + addedFolders
+```
+
+This ordering ensures a terminal `mv pages/ pages2/` is detected as a single rename event rather than a delete-then-create pair that would incorrectly remove the folder from the UI before recreating it.
 
 ---
 
 ## Engineering Challenges
 
-### 1. Stale Closure — WebContainer Instance Not Available at Handler Registration
+### 1. Stale Closure — WebContainer Instance Unavailable at Handler Registration
 
-Socket event handlers are registered once when the socket connects. At that point, the WebContainer instance is `null` (still initializing). When a file action arrives later, the handler reads the stale `null` from its closure and skips the WebContainer sync.
+Socket event handlers are registered once when the socket connects. At that moment, the WebContainer instance is `null` — it initializes asynchronously over the next several seconds (downloading the WASM runtime, running `npm install`, booting the Node.js environment). When a file action event later arrives, the handler reads the stale `null` from its closure and silently skips the WebContainer sync.
 
-**Solution:** A `useRef` is kept in sync with the latest WebContainer object via a separate `useEffect`. The handler reads from the ref at call time, not from the closure — always getting the current instance regardless of when the handler was registered.
+**Why it's non-trivial:** Adding `webContainer` to the `useEffect` dependency array would force the socket listener to be torn down and re-registered every time the WebContainer state changes (loading, ready, server URL available) — creating a window where events can be missed between `socket.off` and `socket.on`.
 
-### 2. Recursive Folder Rename Across All Participants
+**Solution:** A stable `useRef` is kept in sync with the latest WebContainer object via a dedicated `useEffect`. The socket handler reads from the ref at call time rather than from the closure — always accessing the current instance regardless of when the handler was originally registered.
 
-Renaming a folder requires updating every nested file's path in Zustand, removing the old folder entry, adding a new one, and performing a recursive copy-then-delete on the WebContainer filesystem (no native rename API). All of this must propagate correctly to every participant.
+```typescript
+const webContainerRef = useRef(webContainer);
+useEffect(() => { webContainerRef.current = webContainer; }, [webContainer]);
 
-**Solution:** The sender broadcasts a single `file:action` rename event with `isFolder: true`. Recipients identify all files under the old path, update each one, manage folder entries explicitly, and apply the recursive WebContainer copy. An `isFolder` flag in the payload distinguishes folder operations from file operations without requiring separate event types.
+// handler reads from ref — never stale
+if (isHostRef.current && webContainerRef.current.instance) { ... }
+```
 
-### 3. FileWatcher Double-Firing
+### 2. Recursive Folder Rename — No Native API
 
-When the UI creates a file (e.g. via the file tree), it writes to the WebContainer filesystem. The FileWatcher detects this change and tries to create the file again — causing a duplicate tree entry.
+WebContainers expose `fs.readFile`, `fs.writeFile`, `fs.rm`, and `fs.mkdir` — but no `fs.rename` or `fs.cp`. Renaming a folder with nested content therefore requires a full recursive copy followed by deletion of the original. This must be applied correctly across every participant's independent WebContainer filesystem.
 
-**Solution:** Before any UI-triggered file operation, the target path is added to a `manuallyCreatedFilesRef` Set with a 3-second TTL. The FileWatcher checks this Set before processing any detected change and skips paths that the UI already handled. For folder renames, all nested paths are tracked recursively.
+**Solution:** The sender broadcasts one `file:action` event with `isFolder: true` and the old/new paths. Every receiver implements the same recursive copy-then-delete locally:
 
-### 4. FileWatcher Event Priority — Rename vs Delete+Create
+```
+copyDir(src, dest):
+  mkdir dest
+  for each entry in readdir(src):
+    if directory → copyDir(src/entry, dest/entry)
+    if file      → readFile(src/entry) → writeFile(dest/entry)
+rm(src, { recursive: true })
+```
 
-A terminal folder rename (`mv a/ b/`) appears to the FileWatcher as: folder `a/` deleted, folder `b/` created, and all nested files deleted/created. Processing deletions before renames would incorrectly remove files from the tree before the rename is detected.
+The Zustand file tree also requires explicit management: all nested file paths are updated, the old `type: "dir"` entry is removed, and a new one is added. Without this, the old empty folder persists in the UI.
 
-**Solution:** The detection order inside `checkForChanges` is strictly: (1) folder renames, (2) file renames, (3) deletions, (4) creations. Each step operates on mutable arrays. Once a rename is detected, the involved paths are spliced out of those arrays so subsequent steps never see them.
+### 3. FileWatcher Double-Firing on UI Operations
 
-### 5. Guest Workspace Initialization
+When the UI creates a file (e.g. via the file tree dialog), it writes the file to the WebContainer filesystem directly. Two seconds later the FileWatcher polls, sees the new file, and calls `handleFileCreated` — which tries to add the file to the tree again, creating a duplicate entry and a second broadcast to all participants.
 
-When a guest joins mid-session on a GitHub collab, the clean GitHub tree (committed state) doesn't reflect the host's uncommitted changes. The guest would be out of sync from the start.
+**Solution:** Before any UI-triggered file or folder operation, all affected paths (including all nested paths for folder renames) are added to a `manuallyCreatedFilesRef` Set with a 3-second TTL. The FileWatcher checks this Set first and skips any path it finds there.
 
-**Solution:** Guests request a snapshot from the host immediately after joining. The host serializes their current Zustand workspace state (including `modifiedFiles`, `createdFiles`, `deletedFiles`, and file contents from open tabs) and sends it directly to the guest's socket. The guest applies the snapshot on top of the clean tree, arriving at the exact same working state as the host. An 8-second timeout with GitHub fallback handles the case where the host is unreachable.
+```typescript
+manuallyCreatedFilesRef.current.add(filePath);
+setTimeout(() => manuallyCreatedFilesRef.current.delete(filePath), 3000);
+// ... proceed with the actual operation
+```
 
-### 6. Discard Propagation — Restoring vs Creating
+### 4. FileWatcher Event Priority Ordering
 
-When a host discards a folder rename (reverting `Pages1/` back to `Pages/`), it broadcasts file deletions for the new paths and file restores for the old paths. Guests must distinguish between "a new file was created" (mark as `A`) and "an original GitHub file was restored" (remove `D` marker, show as clean).
+A terminal `mv pages/ pages2/` produces four simultaneous raw diffs: `pages/` deleted, `pages2/` created, all files under `pages/` deleted, all files under `pages2/` created. If deletions were processed before rename detection, the folder and its contents would be removed from the UI before the rename logic runs — leaving the tree in an empty state.
 
-**Solution:** A `broadcastFileRestore` function sends `isRestore: true` and the original `sha` in the payload. The receiving `handleRemoteFileAction` checks this flag — restores call `addFileToTree` with the real sha and `unmarkFileDeleted`, rather than `markFileCreated`. A new `unmarkFileDeleted` action was added to the Zustand store to handle this case cleanly.
+**Solution:** Raw diffs are computed upfront into four mutable arrays. Rename detection runs first and splices matched paths out of all four arrays before any callback fires. Deletions and creations only see what the rename step left behind. This ordering is also why folder rename detection runs before file rename detection — a folder rename implicitly accounts for all its nested file renames.
 
-### 7. Triple Socket Connection Per User
+### 5. Guest Workspace Initialization — Diverged State at Join Time
 
-Each major component (`CollabPlayground`, `CollabEditor`, `useCollabWebContainer`) was independently calling `useCollabSocket`, creating three simultaneous WebSocket connections per user — tripling server load and causing duplicate event handling.
+GitHub collab's source of truth is split between GitHub (committed state, fetched via API) and the host's in-memory Zustand store (uncommitted changes). A guest fetching only the GitHub tree would be missing all of the host's local modifications, created files, and staged deletions — immediately out of sync.
 
-**Solution:** `CollabPlayground` owns the single socket instance and passes it down via props. Child components receive the socket as a prop rather than creating their own connections.
+**Solution:** Guests request a snapshot from the host via a server-relayed socket event. The host serializes their complete Zustand workspace state — including file contents from open tabs to capture unsaved edits — and sends it directly to the guest's socket ID. The guest applies this on top of the clean GitHub tree, arriving at the host's exact working state. An 8-second timeout with GitHub-only fallback handles cases where the host is unreachable.
 
-### 8. Preventing Ghost Cursors
+### 6. Discard Propagation — Restore vs Create Ambiguity
 
-Remote cursors rendered in Monaco persist indefinitely if the user stops moving but stays connected (e.g. switches to another application). This leaves stale cursor decorations in other users' editors.
+When the host discards a folder rename (e.g. reverting `Pages1/` back to `Pages/`), it needs to broadcast two things per file: delete the new-path file, and restore the old-path file. Guests receiving a "create" event for the restored file would incorrectly mark it as a new file (`A` in source control) rather than a restored GitHub file (clean state).
 
-**Solution:** Every incoming `collab:remote-cursor` event resets a per-user `setTimeout` of 6 seconds. If no new cursor event arrives within that window, the cursor is removed from the Map and Monaco decorations are cleaned up. On disconnect, the cursor is removed immediately via the `collab:user-left` handler.
+**Solution:** A dedicated `broadcastFileRestore` function sets `isRestore: true` and includes the file's original `sha` in the payload. The receiver's `handleRemoteFileAction` branches on this flag — restores call `addFileToTree` with the real sha and `unmarkFileDeleted` (a new Zustand action added for this purpose), never `markFileCreated`. This keeps source control state accurate across all participants after a discard.
+
+### 7. Rename-Back-to-Original Leaves Spurious Source Control Markers
+
+Renaming a folder from `Pages/` → `Pages1/` → back to `Pages/` should result in a clean workspace. Instead, the second rename added `Pages/` to `createdFiles` (showing `A`) while it was still in `deletedFiles` (showing `D`) — double-marking files that are effectively unchanged.
+
+**Solution:** `markFileCreated` now checks `remoteState` before adding to `createdFiles`. If the path exists in `remoteState`, it's a GitHub file being restored — so the deletion is unmarked instead of a creation being marked. The file ends up in neither `createdFiles` nor `deletedFiles`: a clean state with no source control markers.
+
+### 8. Triple Socket Connection Per User
+
+Each of the three main components (`CollabPlayground`, `CollabEditor`, `useCollabWebContainer`) independently called `useCollabSocket`, resulting in three simultaneous WebSocket connections per user — tripling server-side memory usage and causing each event to be handled three times with conflicting state updates.
+
+**Solution:** `CollabPlayground` owns the single socket instance and passes it to child components via props. This is the correct pattern: a single connection owner, with consumers receiving the socket as a prop rather than creating their own.
+
+### 9. Ghost Cursors on Idle
+
+Remote cursors rendered as Monaco content widgets persist indefinitely if a user stops moving their cursor but stays connected — for example, when reading code or switching to another application. This leaves floating cursor decorations that no longer reflect anyone's actual position.
+
+**Solution:** Each incoming `collab:remote-cursor` event resets a per-user `NodeJS.Timeout` stored in a `Map` inside a `useRef`. If no new cursor event arrives within 6 seconds, the timeout fires and removes the cursor from both the Zustand Map and the Monaco decoration layer. On disconnect, `collab:user-left` triggers immediate removal without waiting for the timeout.
+
+---
+
+## Development & Quality
+
+### Dockerized Environment
+
+The project includes a multi-stage `Dockerfile` (Node 20 Alpine base) and a `docker-compose.yml` for local development. The compose file connects to MongoDB Atlas rather than running a local container, keeping the setup lean.
+
+```bash
+# Build and run via Docker
+docker compose up --build
+```
+
+### CI Pipeline (GitHub Actions)
+
+Every push and pull request to `main` runs a three-job CI pipeline:
+
+```
+┌─────────────────────────────────────────────┐
+│              GitHub Actions CI              │
+│                                             │
+│  ┌─────────┐  ┌───────────┐  ┌──────────┐ │
+│  │  Lint   │  │   Test    │  │  Docker  │ │
+│  │ & Type  │→ │ (Vitest   │→ │  Build   │ │
+│  │  Check  │  │ 481+ tests│  │ Validate │ │
+│  └─────────┘  └───────────┘  └──────────┘ │
+└─────────────────────────────────────────────┘
+```
+
+All environment variables are mapped to GitHub Actions secrets. The pipeline fails fast — a TypeScript error or failing test blocks the Docker build step.
+
+### Test Coverage
+
+**481+ Vitest unit tests** covering:
+
+| Module | What's tested |
+|---|---|
+| `useFileExplorer` | All CRUD operations, duplicate detection, path resolution, open file tab management |
+| `useGitWorkspace` | Branch switching, change tracking, discard logic, staged vs unstaged state |
+| Collaboration handlers | Socket event routing using a shared `fakeSocket` EventEmitter test utility |
+| GitHub Integration | Octokit operations, rate limiting, path traversal guards, concurrent operation race conditions |
+
+Tests follow the pattern: export `initialState`, reset in `beforeEach`, seed state, call real action, assert real state, mock only I/O boundaries. Mocking the implementation itself is avoided — tests catch real bugs by exercising actual logic.
 
 ---
 
@@ -278,65 +400,74 @@ Remote cursors rendered in Monaco persist indefinitely if the user stops moving 
 
 ```
 .
-├── app/                          # Next.js App Router
-│   ├── (auth)/                   # Auth pages
-│   ├── playground/               # Solo playground routes
-│   │   └── [id]/
-│   ├── collab/                   # Collaboration routes
-│   │   └── [sessionId]/
-│   └── api/                      # API routes
+├── app/                              # Next.js App Router
+│   ├── (auth)/                       # Auth pages (sign in, sign up)
+│   ├── playground/[id]/              # Solo playground route
+│   ├── collab/[sessionId]/           # Collaboration route
+│   └── api/                          # REST API routes
 │
 ├── modules/
-│   ├── auth/                     # NextAuth config, actions
+│   ├── auth/                         # NextAuth config and server actions
+│   │
 │   ├── playground/
-│   │   ├── components/           # Editor, file tree, loader
+│   │   ├── components/               # PlaygroundEditor, FileTree, Loader
 │   │   ├── hooks/
-│   │   │   ├── useFileExplorer.ts    # Zustand store — file tree + CRUD
-│   │   │   ├── usePlayground.ts
-│   │   │   └── useAiSuggestions.ts
-│   │   └── lib/                  # Path utilities, file ID generation
+│   │   │   ├── useFileExplorer.ts    # Zustand store — file tree + CRUD operations
+│   │   │   ├── usePlayground.ts      # Playground data fetching
+│   │   │   └── useAiSuggestions.ts   # Gemini AI inline suggestions
+│   │   └── lib/                      # Path utilities, file ID generation, enrichment
 │   │
 │   ├── collaboration/
-│   │   ├── components/           # CollabPlayground, CollabEditor, ParticipantsPanel
+│   │   ├── components/
+│   │   │   ├── CollabPlayground.tsx  # Normal collab session (template-based)
+│   │   │   ├── GitHubCollabPlayground.tsx  # GitHub collab session
+│   │   │   ├── CollabEditor.tsx      # Monaco editor with remote cursors
+│   │   │   └── ParticipantsPanel.tsx # Presence + activity log panel
 │   │   ├── hooks/
-│   │   │   ├── useCollabSocket.ts        # WebSocket connection + emit helpers
-│   │   │   ├── useCollabParticipants.ts  # Participant list + activity logs
-│   │   │   ├── useCollabWorkspace.ts     # GitHub collab file sync
-│   │   │   ├── useRemoteCursors.ts       # Remote cursor state + cleanup
-│   │   │   └── useProximityWarnings.ts   # Proximity glyph warnings
-│   │   └── workspaces/           # Collab workspace DB actions
+│   │   │   ├── useCollabSocket.ts        # WebSocket connection + typed emit helpers
+│   │   │   ├── useCollabParticipants.ts  # Participant list + activity log state
+│   │   │   ├── useCollabWorkspace.ts     # GitHub collab file sync bridge
+│   │   │   ├── useRemoteCursors.ts       # Remote cursor state + stale cleanup
+│   │   │   └── useProximityWarnings.ts   # Proximity glyph warning logic
+│   │   └── workspaces/               # Collab workspace DB actions
 │   │
 │   ├── github/
-│   │   ├── actions/              # fetchRepositoryTree, commitAllChanges
-│   │   ├── components/           # GitHubFileTree, SourceControlPanel, DiffViewer
+│   │   ├── actions/                  # fetchRepositoryTree, commitAllChangesToGitHub
+│   │   ├── components/
+│   │   │   ├── GitHubFileTree.tsx    # File tree with staged change indicators
+│   │   │   ├── SourceControlPanel.tsx
+│   │   │   └── DiffViewer.tsx        # Monaco inline diff component
 │   │   └── hooks/
-│   │       ├── Usegitworkspace.ts    # Zustand store — GitHub file state
-│   │       ├── useRestoreDraft.ts
+│   │       ├── Usegitworkspace.ts    # Zustand store — GitHub file + change tracking
+│   │       ├── useRestoreDraft.ts    # Draft restoration on session rejoin
 │   │       └── useWorkspaceAutoSave.ts
 │   │
 │   └── webContainers/
 │       ├── services/
-│       │   ├── webContainer-services.ts  # Singleton WebContainer instance
-│       │   └── fileWatcher.ts            # Polling-based filesystem watcher
+│       │   ├── webContainer-services.ts  # Singleton WebContainer instance manager
+│       │   └── fileWatcher.ts            # Polling-based filesystem change detector
 │       ├── hooks/
-│       │   ├── useWebContainer.ts            # Solo playground WC hook
-│       │   ├── useCollabWebContainer.ts      # Collab WC hook (host/guest split)
-│       │   └── useWebContainerForGithub.ts   # GitHub collab WC hook
+│       │   ├── useWebContainer.ts            # Solo playground WebContainer hook
+│       │   ├── useCollabWebContainer.ts      # Normal collab WC (host/guest split)
+│       │   └── useWebContainerForGithub.ts   # GitHub collab WC (per-user instances)
 │       └── components/
 │           ├── WebContainerPreview.tsx   # Preview iframe + terminal layout
-│           └── terminal.tsx              # xterm.js terminal component
+│           └── terminal.tsx              # xterm.js terminal with shell integration
 │
 ├── lib/
-│   ├── db.ts                     # Prisma client singleton
+│   ├── db.ts                         # Prisma client singleton
 │   └── socket/
-│       └── server.ts             # Socket.IO server — all event handlers
+│       └── server.ts                 # Socket.IO server — all event handlers, session state Maps
 │
 ├── prisma/
 │   └── schema.prisma
 │
-├── server.ts                     # Custom Node.js HTTP server entry point
+├── server.ts                         # Custom Node.js HTTP server entry point
+├── Dockerfile                        # Multi-stage Docker build (Node 20 Alpine)
+├── docker-compose.yml
+├── .github/workflows/ci.yml          # GitHub Actions CI pipeline
 │
-└── __tests__/                    # Vitest unit tests
+└── __tests__/                        # Vitest unit tests (481+ tests)
     ├── useFileExplorer.test.ts
     ├── useGitWorkspace.test.ts
     └── collab/
@@ -365,18 +496,28 @@ npm install
 
 # Configure environment variables
 cp .env.example .env.local
-# Fill in required values (see Environment Variables section)
+# Edit .env.local with your credentials (see Environment Variables below)
 
-# Push database schema
+# Push the Prisma schema to MongoDB
 npx prisma db push
 
-# Start development server
+# Start the development server
 npm run dev
 ```
 
 The app will be available at `http://localhost:3000`.
 
-> **Note:** WebContainers require specific HTTP headers (`Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`). These are configured automatically in `next.config.js`.
+> **Note:** WebContainers require two HTTP response headers — `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` — to enable the `SharedArrayBuffer` API. These are configured automatically in `next.config.js` for all routes that render the editor.
+
+### Docker
+
+```bash
+# Build and run with Docker Compose
+docker compose up --build
+
+# Run tests inside the container
+docker compose run app npm test
+```
 
 ---
 
@@ -393,7 +534,7 @@ NEXTAUTH_URL=http://localhost:3000
 # GitHub OAuth
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=
-GITHUB_ACCESS_TOKEN=          # Personal access token for GitHub API operations
+GITHUB_ACCESS_TOKEN=       # Personal access token for Octokit API operations
 
 # Google OAuth (optional)
 GOOGLE_CLIENT_ID=
@@ -409,52 +550,30 @@ UPSTASH_REDIS_REST_TOKEN=
 # Vercel Blob (file storage)
 BLOB_READ_WRITE_TOKEN=
 
-# Gemini API (AI suggestions)
+# Gemini API (AI inline suggestions)
 GEMINI_API_KEY=
 ```
 
 ---
 
-## Testing
-
-```bash
-# Unit tests (Vitest)
-npm run test
-
-# End-to-end tests (Playwright)
-npm run test:e2e
-```
-
-Unit tests cover:
-- `useFileExplorer` Zustand store — all CRUD operations and edge cases
-- `useGitWorkspace` Zustand store — branch switching, change tracking, discard logic
-- Socket.IO collaboration logic — using a shared `fakeSocket` EventEmitter utility
-- GitHub Integration Module — Octokit operations with mocked responses
-
-E2E tests cover:
-- Multi-user Socket.IO sync (WebContainer boot + file sync smoke tests)
-- Authentication flow via GitHub OAuth with `storageState` cookie capture
-
----
-
 ## Future Improvements
 
-- **CRDT / Operational Transforms** — replace full-content sync with delta-based conflict resolution (e.g. Yjs) to handle concurrent edits correctly
-- **Shared terminal** — broadcast terminal I/O so all participants see the same shell session, not just terminal output
-- **Voice collaboration** — WebRTC-based voice channels tied to collaboration sessions
-- **Collaborative debugging** — shared breakpoints and step-through debugging via the Chrome DevTools Protocol
-- **Deployment from editor** — one-click deploy to Vercel or Railway directly from the session
-- **Persistent terminal history** — replay full terminal history for late-joining users beyond the current 1000-line server-side buffer
-- **Granular presence** — show which specific line each collaborator is viewing, not just which file
-- **Session recording** — record and replay collaboration sessions for async code review
+| Improvement | Why it matters |
+|---|---|
+| **CRDT / Operational Transforms** | Replace full-content sync with delta-based conflict resolution (e.g. Yjs) to handle true concurrent edits without last-write-wins |
+| **Shared terminal** | Broadcast terminal I/O bidirectionally so all participants interact with the same shell session |
+| **Voice collaboration** | WebRTC voice channels scoped to collaboration sessions |
+| **Collaborative debugging** | Shared breakpoints and step-through via the Chrome DevTools Protocol |
+| **Deployment from editor** | One-click deploy to Vercel or Railway directly from a session |
+| **Persistent terminal history** | Extend beyond the current 1000-line server buffer for late joiners |
+| **Session recording** | Record and replay collaboration sessions for async code review |
+| **Granular presence** | Show which specific line each collaborator is viewing, not just which file |
 
 ---
 
 ## License
 
-MIT License
-
-Copyright (c) 2025 Swanand
+MIT License — Copyright (c) 2025 Swanand
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
