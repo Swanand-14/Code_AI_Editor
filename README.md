@@ -11,7 +11,7 @@
 ## Demo
 https://github.com/user-attachments/assets/4f1b744d-bb89-4ae5-8f20-aa3fb3ca6983
 ### 📹 Demo Video
-> *Coming soon — video demonstrating:*
+> video demonstrating:
 > - Host creating a collaboration session
 > - Guest joining and workspace snapshot initialization
 > - Real-time cursor synchronization across users
@@ -20,10 +20,7 @@ https://github.com/user-attachments/assets/4f1b744d-bb89-4ae5-8f20-aa3fb3ca6983
 > - File deletion across all participants
 > - WebContainer filesystem synchronization
 
-### 🎞️ Demo GIF
-> *Coming soon*
-          
----
+
 
 ## Screenshots
 
