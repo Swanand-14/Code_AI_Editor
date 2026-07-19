@@ -1,3 +1,7 @@
+
+
+https://github.com/user-attachments/assets/4f1b744d-bb89-4ae5-8f20-aa3fb3ca6983
+
 # CodeForge — Browser-Based Collaborative IDE
 
 > A full-stack, browser-based IDE that executes Node.js projects entirely client-side via WebContainers, with real-time multi-user collaboration, live cursor synchronization, and direct GitHub repository integration — built on Next.js 15, Socket.IO, and React 19.
@@ -18,7 +22,7 @@
 
 ### 🎞️ Demo GIF
 > *Coming soon*
-
+          
 ---
 
 ## Screenshots
